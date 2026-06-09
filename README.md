@@ -15,33 +15,29 @@ correct numeric answer.
 | `scripts/chat.py` | Interactive generation from a checkpoint. |
 | `scripts/data.py` | GSM8K loading and prompt formatting. |
 | `scripts/rewards.py` | Reward functions used during GRPO. |
-| `bootstrap.sh` | Creates the Tunix/JAX Python environment. |
-| `requirements.txt` | Pinned package set used by `bootstrap.sh`. |
+| `requirements.txt` | Pinned package set used by the shared environment. |
 
 Most runtime defaults live in `scripts/config.py`, including `CKPT_DIR`,
 `TENSORBOARD_DIR`, `EXPERIMENT_NAME`, `DEFAULT_EVAL_STEP`, `DATA_SOURCE`, and
 `EVAL_DATA_SOURCE`.
 
-## Installation
+## Setup
 
-From a TPU VM with Python 3.12 available:
-
-```bash
-git clone https://github.com/borisbolliet/tpu-2026.git
-cd tpu-2026
-./bootstrap.sh
-```
-
-Activate the environment:
+Use the shared codebase and shared Tunix/JAX environment for normal runs. You do
+not need to clone the repo or run `bootstrap.sh` to train or evaluate.
 
 ```bash
-source ~/venvs/tunix/bin/activate
-```
-
-On this VM, the shared environment is also available at:
-
-```bash
+cd /home/shared/tpu-2026
 source /home/shared/tpu-2026/venvs/tunix/bin/activate
+```
+
+Only clone the repo into your home directory when you want a private development
+copy for code changes:
+
+```bash
+cd ~
+git clone https://github.com/THartigan/tpu-2026.git
+cd ~/tpu-2026
 ```
 
 Set credentials before training or downloading data/models. A local `.env` file
@@ -62,10 +58,13 @@ python -c "import jax; print(jax.default_backend(), jax.devices())"
 
 ## Training
 
+Every training run must have an experiment name. `train.py` enforces this so
+checkpoints and TensorBoard logs stay separate between runs.
+
 Run training from the `scripts` directory:
 
 ```bash
-cd /home/codexdev-tjh200/tpu-2026-1/scripts
+cd /home/shared/tpu-2026/scripts
 /home/shared/tpu-2026/venvs/tunix/bin/python train.py --source kaggle --experiment-name my-run
 ```
 
@@ -73,7 +72,7 @@ For long runs, use `tmux` so training survives SSH disconnects:
 
 ```bash
 tmux new -s tunix
-cd /home/codexdev-tjh200/tpu-2026-1/scripts
+cd /home/shared/tpu-2026/scripts
 source /home/shared/tpu-2026/venvs/tunix/bin/activate
 python -u train.py --source kaggle --experiment-name my-run 2>&1 | tee -a train-my-run.log
 ```
@@ -97,15 +96,10 @@ Tunix then creates actor checkpoints under:
 /home/shared/ckpts/my-run/actor/
 ```
 
-If no experiment name is supplied, the legacy checkpoint root is still:
-
-```text
-/home/shared/ckpts/
-```
-
 To resume the same W&B run, pass the run id:
 
 ```bash
+cd /home/shared/tpu-2026/scripts
 WANDB_RUN_ID=<run-id> /home/shared/tpu-2026/venvs/tunix/bin/python train.py --source kaggle --experiment-name my-run --wandb-run-id <run-id>
 ```
 
@@ -143,14 +137,17 @@ constructed. Project/entity defaults are in `scripts/config.py`.
 `scripts/evaluate.py` now defaults to:
 
 - dataset source: `EVAL_DATA_SOURCE` from `scripts/config.py`
-- experiment name: `EXPERIMENT_NAME` from `scripts/config.py`
 - checkpoint step: `DEFAULT_EVAL_STEP` from `scripts/config.py`
 - decoding preset: whatever is passed with `--preset`
+
+Pass `--experiment-name` for every checkpoint evaluation so the script reads
+from the intended checkpoint directory. `evaluate.py` enforces this for
+checkpoint evaluation unless an explicit `--ckpt-dir` is provided.
 
 Evaluate a named trained LoRA checkpoint:
 
 ```bash
-cd /home/codexdev-tjh200/tpu-2026-1
+cd /home/shared/tpu-2026
 /home/shared/tpu-2026/venvs/tunix/bin/python scripts/evaluate.py --experiment-name my-run --step 3364 --preset greedy --source kaggle
 ```
 
@@ -160,16 +157,10 @@ Expected confirmation:
 Restored LoRA params from /home/shared/ckpts/my-run/actor/3364
 ```
 
-For the legacy checkpoint layout, omit `--experiment-name`:
-
-```bash
-/home/shared/tpu-2026/venvs/tunix/bin/python scripts/evaluate.py --step 3364 --preset greedy --source kaggle
-```
-
 Evaluate the baseline base model without LoRA:
 
 ```bash
-cd /home/codexdev-tjh200/tpu-2026-1
+cd /home/shared/tpu-2026
 /home/shared/tpu-2026/venvs/tunix/bin/python scripts/evaluate.py --baseline --preset greedy --source kaggle
 ```
 
@@ -182,6 +173,7 @@ Evaluating base model without LoRA.
 Use `--step 0` to restore the latest checkpoint in the checkpoint directory:
 
 ```bash
+cd /home/shared/tpu-2026
 /home/shared/tpu-2026/venvs/tunix/bin/python scripts/evaluate.py --experiment-name my-run --step 0 --preset greedy --source kaggle
 ```
 
@@ -196,8 +188,8 @@ The evaluation reports:
 Load a checkpoint and prompt the policy interactively:
 
 ```bash
-cd /home/codexdev-tjh200/tpu-2026-1/scripts
-/home/shared/tpu-2026/venvs/tunix/bin/python chat.py --ckpt-dir /home/shared/ckpts/actor --step 3364 --preset greedy
+cd /home/shared/tpu-2026/scripts
+/home/shared/tpu-2026/venvs/tunix/bin/python chat.py --ckpt-dir /home/shared/ckpts/my-run/actor --step 3364 --preset greedy
 ```
 
 Useful flags:
@@ -209,27 +201,3 @@ Useful flags:
 | `--preset greedy|standard|liberal` | Sampling preset from `scripts/config.py`. |
 | `--no-template` | Prompt the model without the GSM8K wrapper. |
 | `--no-restore` | Skip checkpoint restore. |
-
-## Common Issues
-
-If evaluation crashes inside TensorFlow Datasets with:
-
-```text
-'google._upb._message.FieldDescriptor' object has no attribute 'label'
-```
-
-use the Kaggle source explicitly:
-
-```bash
-/home/shared/tpu-2026/venvs/tunix/bin/python scripts/evaluate.py --step 3364 --preset greedy --source kaggle
-```
-
-If evaluation prints `Restored LoRA params...` and then crashes, checkpoint
-loading succeeded; the failure is later in dataset loading or generation.
-
-If JAX reports a TPU lockfile error, another process may still own libtpu.
-Stop stale training/evaluation processes before retrying.
-
-For GRPO runs, negative policy-gradient losses can be normal. Judge training
-quality mainly from eval reward, exact accuracy, format accuracy, KL, and
-checkpoint comparisons against the baseline model.

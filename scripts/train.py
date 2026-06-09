@@ -154,6 +154,8 @@ def main():
     ap.add_argument("--wandb-run-id", default=WANDB_RUN_ID,
                     help="Pass an existing run id (e.g. bnh9ttlt) to resume.")
     args = ap.parse_args()
+    if not args.experiment_name:
+        ap.error("--experiment-name is required for training.")
 
     ckpt_dir = experiment_path(CKPT_DIR, args.experiment_name)
     tensorboard_dir = experiment_path(TENSORBOARD_DIR, args.experiment_name)

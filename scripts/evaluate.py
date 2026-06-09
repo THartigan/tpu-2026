@@ -140,6 +140,8 @@ def main():
     ap.add_argument("--baseline", action="store_true",
                     help="Evaluate the base model without applying LoRA.")
     args = ap.parse_args()
+    if not args.baseline and not args.experiment_name and not args.ckpt_dir:
+        ap.error("--experiment-name is required for checkpoint evaluation unless --ckpt-dir is provided.")
     ckpt_root = checkpoint_root(args.ckpt_dir, args.experiment_name)
 
     mesh = build_mesh()
