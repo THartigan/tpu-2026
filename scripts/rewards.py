@@ -11,8 +11,9 @@ immediately:
   2. match_format_approximately  — count of expected tags (dense, easy)
   3. check_answer                — exact / close / wrong numeric match
   4. check_numbers               — fallback that just extracts a number
+  5. discourage_short_outputs    — small guardrail against degenerate collapse
 
-The total per-rollout reward is the sum across all four. GRPO then normalises
+The total per-rollout reward is the sum across all five. GRPO then normalises
 this within the group of G rollouts to compute the advantage. This is the
 "group-relative" part of GRPO: no value network is learned; advantages come
 from comparing siblings drawn from the same prompt.
@@ -49,12 +50,30 @@ def match_format_approximately(prompts, completions, **kwargs):
     scores = []
     for response in completions:
         s = 0.0
-        s += 0.5 if response.count(reasoning_start) == 1 else -0.5
-        s += 0.5 if response.find(reasoning_start) == 0 else -0.5
-        s += 0.5 if response.count(reasoning_end) == 1 else -0.5
-        s += 0.5 if response.count(solution_start) == 1 else -0.5
-        s += 0.5 if response.count(solution_end) == 1 else -0.5
+        s += 0.5 if response.count(reasoning_start) == 1 else 0.0
+        s += 0.5 if response.find(reasoning_start) == 0 else 0.0
+        s += 0.5 if response.count(reasoning_end) == 1 else 0.0
+        s += 0.5 if response.count(solution_start) == 1 else 0.0
+        s += 0.5 if response.count(solution_end) == 1 else 0.0
         scores.append(s)
+    return scores
+
+
+def discourage_short_outputs(prompts, completions, **kwargs):
+    """Small penalty for empty or collapsed completions."""
+    scores = []
+    for response in completions:
+        stripped = response.strip()
+        has_reasoning = reasoning_start in response and reasoning_end in response
+        has_answer = solution_start in response and solution_end in response
+        if len(stripped) < 32:
+            scores.append(-1.0)
+        elif len(stripped) < 96:
+            scores.append(-0.5)
+        elif not (has_reasoning and has_answer):
+            scores.append(-0.25)
+        else:
+            scores.append(0.0)
     return scores
 
 
@@ -116,4 +135,10 @@ def check_numbers(prompts, completions, answer, **kwargs):
     return scores
 
 
-REWARD_FNS = [match_format_exactly, match_format_approximately, check_answer, check_numbers]
+REWARD_FNS = [
+    match_format_exactly,
+    match_format_approximately,
+    discourage_short_outputs,
+    check_answer,
+    check_numbers,
+]

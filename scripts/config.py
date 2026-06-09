@@ -39,14 +39,14 @@ MESH = [MESH_COUNTS, ("fsdp", "tp")]
 # ====== Generation during GRPO rollouts ======
 MAX_PROMPT_LENGTH = 256
 TOTAL_GENERATION_STEPS = 768
-TEMPERATURE = 0.9          # high enough that the G samples actually differ
-TOP_P = 1.0
+TEMPERATURE = 0.7          # conservative rollout sampling reduces noisy rewards
+TOP_P = 0.95
 TOP_K = 50
-NUM_GENERATIONS = 2        # G in the GRPO paper — group size for advantage norm
+NUM_GENERATIONS = 4        # G in the GRPO paper — group size for advantage norm
 
 # ====== GRPO loss ======
 NUM_ITERATIONS = 1         # mu — PPO-style inner optimisation passes per batch
-BETA = 0.08                # KL penalty coefficient (anchors to reference model)
+BETA = 0.15                # KL penalty coefficient (anchors to reference model)
 EPSILON = 0.2              # PPO-style clip range
 
 # ====== Training ======
@@ -55,10 +55,11 @@ NUM_BATCHES = 3738
 NUM_TEST_BATCHES = 64
 EVAL_EVERY_N_STEPS = 64
 NUM_EPOCHS = 1
-MAX_STEPS = int(NUM_BATCHES * NUM_ITERATIONS * TRAIN_FRACTION * NUM_EPOCHS)
+FULL_EPOCH_STEPS = int(NUM_BATCHES * NUM_ITERATIONS * TRAIN_FRACTION * NUM_EPOCHS)
+MAX_STEPS = int(os.environ.get("MAX_STEPS", str(FULL_EPOCH_STEPS)))
 
 # ====== Optimiser ======
-LEARNING_RATE = 3e-6
+LEARNING_RATE = 1e-6
 B1 = 0.9
 B2 = 0.99
 WEIGHT_DECAY = 0.1
@@ -71,9 +72,9 @@ INTERMEDIATE_CKPT_DIR = "/home/shared/intermediate_ckpt/"
 CKPT_DIR = "/home/shared/ckpts/"
 TENSORBOARD_DIR = "/home/shared/tensorboard/grpo"
 SAVE_INTERVAL_STEPS = 500
-MAX_TO_KEEP = 4
+MAX_TO_KEEP = 8
 EXPERIMENT_NAME = os.environ.get("EXPERIMENT_NAME", None)
-DEFAULT_EVAL_STEP = int(os.environ.get("DEFAULT_EVAL_STEP", "3364"))
+DEFAULT_EVAL_STEP = int(os.environ.get("DEFAULT_EVAL_STEP", str(MAX_STEPS)))
 
 # ====== Inference presets ======
 GENERATION_CONFIGS = {
