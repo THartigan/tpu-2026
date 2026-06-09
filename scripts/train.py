@@ -13,6 +13,7 @@ Tunix's RLCluster uses Orbax and will pick up the latest step in CKPT_DIR.
 """
 import argparse
 import os
+import re
 
 import nest_asyncio
 import optax
@@ -31,6 +32,7 @@ from config import (
     DATA_SOURCE,
     EPSILON,
     EVAL_EVERY_N_STEPS,
+    EXPERIMENT_NAME,
     LEARNING_RATE,
     MAX_GRAD_NORM,
     MAX_PROMPT_LENGTH,
@@ -61,6 +63,16 @@ from model import build_mesh, download_weights, load_base_model, get_lora_model,
 from rewards import REWARD_FNS
 
 
+def experiment_path(root: str, experiment_name: str | None) -> str:
+    if not experiment_name:
+        return root
+    if experiment_name in {".", ".."} or not re.fullmatch(r"[A-Za-z0-9_.-]+", experiment_name):
+        raise ValueError(
+            "Experiment names may only contain letters, numbers, '.', '_', and '-'."
+        )
+    return os.path.join(root, experiment_name)
+
+
 def login_services():
     load_dotenv()
     nest_asyncio.apply()  # tunix uses async; jupyter-style nesting helps in tmux too
@@ -70,12 +82,14 @@ def login_services():
         os.system(f'hf auth login --token "{os.environ["HF_TOKEN"]}"')
 
 
-def maybe_init_wandb(run_id: str | None):
+def maybe_init_wandb(run_id: str | None, experiment_name: str | None):
     """Init wandb. If run_id is given we resume; otherwise a fresh run is created."""
     if not os.environ.get("WANDB_API_KEY"):
         print("WANDB_API_KEY not set — skipping wandb.")
         return None
     kwargs = {"project": WANDB_PROJECT, "entity": WANDB_ENTITY}
+    if experiment_name:
+        kwargs["name"] = experiment_name
     if run_id:
         # "allow" => resume if the run exists on the server, otherwise create
         # a new run with this id. "must" errors out if the run was never synced
@@ -99,7 +113,7 @@ def build_optimizer():
     return opt
 
 
-def build_cluster_config(mesh, optimizer, eos_tokens):
+def build_cluster_config(mesh, optimizer, eos_tokens, ckpt_dir: str, tensorboard_dir: str):
     return rl_cluster_lib.ClusterConfig(
         role_to_mesh={
             rl_cluster_lib.Role.ACTOR: mesh,
@@ -115,9 +129,9 @@ def build_cluster_config(mesh, optimizer, eos_tokens):
             mini_batch_size=TRAIN_MICRO_BATCH_SIZE,
             train_micro_batch_size=TRAIN_MICRO_BATCH_SIZE,
             metrics_logging_options=metrics_logger.MetricsLoggerOptions(
-                log_dir=TENSORBOARD_DIR, flush_every_n_steps=20,
+                log_dir=tensorboard_dir, flush_every_n_steps=20,
             ),
-            checkpoint_root_directory=CKPT_DIR,
+            checkpoint_root_directory=ckpt_dir,
             checkpointing_options=ocp.CheckpointManagerOptions(
                 save_interval_steps=SAVE_INTERVAL_STEPS, max_to_keep=MAX_TO_KEEP,
             ),
@@ -135,14 +149,19 @@ def build_cluster_config(mesh, optimizer, eos_tokens):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", default=DATA_SOURCE, choices=["tfds", "kaggle"])
+    ap.add_argument("--experiment-name", default=EXPERIMENT_NAME,
+                    help="Optional run name. Stores checkpoints under CKPT_DIR/<name>/ and TensorBoard under TENSORBOARD_DIR/<name>/")
     ap.add_argument("--wandb-run-id", default=WANDB_RUN_ID,
                     help="Pass an existing run id (e.g. bnh9ttlt) to resume.")
     args = ap.parse_args()
 
+    ckpt_dir = experiment_path(CKPT_DIR, args.experiment_name)
+    tensorboard_dir = experiment_path(TENSORBOARD_DIR, args.experiment_name)
+
     login_services()
     # init wandb BEFORE the trainer because tunix sometimes hangs if wandb is
     # initialised mid-RLCluster construction (known bug).
-    maybe_init_wandb(args.wandb_run_id)
+    maybe_init_wandb(args.wandb_run_id, args.experiment_name)
 
     mesh = build_mesh()
     local_path, eos_tokens = download_weights()
@@ -157,7 +176,7 @@ def main():
     print(f"Datasets: train={len(train_ds)} val={len(val_ds) if val_ds else 0}")
 
     optimizer = build_optimizer()
-    cluster_cfg = build_cluster_config(mesh, optimizer, eos_tokens)
+    cluster_cfg = build_cluster_config(mesh, optimizer, eos_tokens, ckpt_dir, tensorboard_dir)
     grpo_cfg = GRPOConfig(
         num_generations=NUM_GENERATIONS,
         num_iterations=NUM_ITERATIONS,
@@ -170,7 +189,10 @@ def main():
     )
     trainer = GRPOLearner(rl_cluster=rl_cluster, reward_fns=REWARD_FNS, algo_config=grpo_cfg)
 
-    print(f"Starting GRPO training. CKPT_DIR={CKPT_DIR}  MAX_STEPS={MAX_STEPS}")
+    print(
+        f"Starting GRPO training. CKPT_DIR={ckpt_dir}  "
+        f"TENSORBOARD_DIR={tensorboard_dir}  MAX_STEPS={MAX_STEPS}"
+    )
     trainer.train(train_ds, val_ds)
     print("Training finished.")
 

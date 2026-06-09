@@ -8,15 +8,21 @@ Reports three numbers:
 Run as:
     python evaluate.py
 
-By default this restores LoRA weights from /home/shared/ckpts/actor/3364.
+By default this restores the step configured by DEFAULT_EVAL_STEP in config.py.
 """
 import argparse
+import os
+import re
 
 from tqdm.auto import tqdm
 from tunix.generate import sampler as sampler_lib
 from tunix.sft.checkpoint_manager import CheckpointManager
 
 from config import (
+    CKPT_DIR,
+    DEFAULT_EVAL_STEP,
+    EVAL_DATA_SOURCE,
+    EXPERIMENT_NAME,
     GENERATION_CONFIGS,
     MAX_PROMPT_LENGTH,
     NUM_TEST_BATCHES,
@@ -32,8 +38,7 @@ from data import SYSTEM_PROMPT, TEMPLATE, build_train_val_test
 from model import build_mesh, download_weights, load_base_model, get_lora_model, load_tokenizer
 from rewards import match_format, match_numbers
 
-DEFAULT_CKPT_ROOT = "/home/shared/ckpts/actor"
-DEFAULT_STEP = 3364
+DEFAULT_CKPT_ROOT = os.path.join(CKPT_DIR, "actor")
 
 
 def generate(question, sampler, eos_tokens, temperature=0.7, top_k=50, top_p=0.95, seed=None):
@@ -107,20 +112,35 @@ def restore_lora(lora_model, ckpt_root: str, step: int | None) -> int:
     return restored_step
 
 
+def checkpoint_root(ckpt_dir: str | None, experiment_name: str | None) -> str:
+    if ckpt_dir:
+        return ckpt_dir
+    if not experiment_name:
+        return DEFAULT_CKPT_ROOT
+    if experiment_name in {".", ".."} or not re.fullmatch(r"[A-Za-z0-9_.-]+", experiment_name):
+        raise ValueError(
+            "Experiment names may only contain letters, numbers, '.', '_', and '-'."
+        )
+    return os.path.join(CKPT_DIR, experiment_name, "actor")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--preset", default="greedy", choices=list(GENERATION_CONFIGS))
-    ap.add_argument("--source", default="kaggle", choices=["tfds", "kaggle"],
+    ap.add_argument("--source", default=EVAL_DATA_SOURCE, choices=["tfds", "kaggle"],
                     help="Dataset source for eval. Defaults to kaggle to avoid TFDS/protobuf issues.")
-    ap.add_argument("--ckpt-dir", default=DEFAULT_CKPT_ROOT,
-                    help=f"Directory containing per-step actor checkpoints. Default: {DEFAULT_CKPT_ROOT}")
-    ap.add_argument("--step", type=int, default=DEFAULT_STEP,
-                    help=f"Checkpoint step to load. Default: {DEFAULT_STEP}. Pass 0 for latest.")
+    ap.add_argument("--experiment-name", default=EXPERIMENT_NAME,
+                    help=f"Optional experiment name. Looks for checkpoints under {CKPT_DIR}<name>/actor.")
+    ap.add_argument("--ckpt-dir", default=None,
+                    help=f"Directory containing per-step actor checkpoints. Default: {DEFAULT_CKPT_ROOT}, or {CKPT_DIR}<experiment-name>/actor when set.")
+    ap.add_argument("--step", type=int, default=DEFAULT_EVAL_STEP,
+                    help=f"Checkpoint step to load. Default: {DEFAULT_EVAL_STEP}. Pass 0 for latest.")
     ap.add_argument("--no-restore", action="store_true",
                     help="Evaluate the freshly wrapped LoRA model without restoring checkpoint weights.")
     ap.add_argument("--baseline", action="store_true",
                     help="Evaluate the base model without applying LoRA.")
     args = ap.parse_args()
+    ckpt_root = checkpoint_root(args.ckpt_dir, args.experiment_name)
 
     mesh = build_mesh()
     local_path, eos_tokens = download_weights()
@@ -135,7 +155,7 @@ def main():
         if args.no_restore:
             print("Skipping checkpoint restore.")
         else:
-            restore_lora(lora, args.ckpt_dir, None if args.step == 0 else args.step)
+            restore_lora(lora, ckpt_root, None if args.step == 0 else args.step)
         model = lora
 
     _, _, test_ds = build_train_val_test(

@@ -15,6 +15,7 @@ TRAIN_DATA_DIR = "./data/train"
 TEST_DATA_DIR = "./data/test"
 TRAIN_FRACTION = 0.9
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "tfds")  # "tfds" or "kaggle"
+EVAL_DATA_SOURCE = os.environ.get("EVAL_DATA_SOURCE", "kaggle")
 
 # ====== LoRA (parameter-efficient finetuning) ======
 # Only the LoRA adapters are trained; the base model is frozen and shared with
@@ -71,6 +72,8 @@ CKPT_DIR = "/home/shared/ckpts/"
 TENSORBOARD_DIR = "/home/shared/tensorboard/grpo"
 SAVE_INTERVAL_STEPS = 500
 MAX_TO_KEEP = 4
+EXPERIMENT_NAME = os.environ.get("EXPERIMENT_NAME", None)
+DEFAULT_EVAL_STEP = int(os.environ.get("DEFAULT_EVAL_STEP", "3364"))
 
 # ====== Inference presets ======
 GENERATION_CONFIGS = {

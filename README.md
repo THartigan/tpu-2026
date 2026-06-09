@@ -18,6 +18,10 @@ correct numeric answer.
 | `bootstrap.sh` | Creates the Tunix/JAX Python environment. |
 | `requirements.txt` | Pinned package set used by `bootstrap.sh`. |
 
+Most runtime defaults live in `scripts/config.py`, including `CKPT_DIR`,
+`TENSORBOARD_DIR`, `EXPERIMENT_NAME`, `DEFAULT_EVAL_STEP`, `DATA_SOURCE`, and
+`EVAL_DATA_SOURCE`.
+
 ## Installation
 
 From a TPU VM with Python 3.12 available:
@@ -62,7 +66,7 @@ Run training from the `scripts` directory:
 
 ```bash
 cd /home/codexdev-tjh200/tpu-2026-1/scripts
-/home/shared/tpu-2026/venvs/tunix/bin/python train.py --source kaggle
+/home/shared/tpu-2026/venvs/tunix/bin/python train.py --source kaggle --experiment-name my-run
 ```
 
 For long runs, use `tmux` so training survives SSH disconnects:
@@ -71,7 +75,7 @@ For long runs, use `tmux` so training survives SSH disconnects:
 tmux new -s tunix
 cd /home/codexdev-tjh200/tpu-2026-1/scripts
 source /home/shared/tpu-2026/venvs/tunix/bin/activate
-python -u train.py --source kaggle 2>&1 | tee -a train.log
+python -u train.py --source kaggle --experiment-name my-run 2>&1 | tee -a train-my-run.log
 ```
 
 Detach with `Ctrl-b d`, reattach with:
@@ -80,23 +84,29 @@ Detach with `Ctrl-b d`, reattach with:
 tmux attach -t tunix
 ```
 
-Training checkpoints are configured in `scripts/config.py` and currently write
-under:
+Training checkpoints are configured in `scripts/config.py`. With
+`--experiment-name my-run`, checkpoints are written under:
+
+```text
+/home/shared/ckpts/my-run/
+```
+
+Tunix then creates actor checkpoints under:
+
+```text
+/home/shared/ckpts/my-run/actor/
+```
+
+If no experiment name is supplied, the legacy checkpoint root is still:
 
 ```text
 /home/shared/ckpts/
 ```
 
-The actor checkpoint used for evaluation is:
-
-```text
-/home/shared/ckpts/actor/3364
-```
-
 To resume the same W&B run, pass the run id:
 
 ```bash
-WANDB_RUN_ID=<run-id> /home/shared/tpu-2026/venvs/tunix/bin/python train.py --source kaggle --wandb-run-id <run-id>
+WANDB_RUN_ID=<run-id> /home/shared/tpu-2026/venvs/tunix/bin/python train.py --source kaggle --experiment-name my-run --wandb-run-id <run-id>
 ```
 
 ## Monitoring
@@ -105,6 +115,12 @@ TensorBoard logs are written to:
 
 ```text
 /home/shared/tensorboard/grpo
+```
+
+Named experiments write TensorBoard events under:
+
+```text
+/home/shared/tensorboard/grpo/<experiment-name>
 ```
 
 Start TensorBoard on the TPU VM:
@@ -126,21 +142,28 @@ constructed. Project/entity defaults are in `scripts/config.py`.
 
 `scripts/evaluate.py` now defaults to:
 
-- dataset source: `kaggle`
-- trained checkpoint: `/home/shared/ckpts/actor/3364`
+- dataset source: `EVAL_DATA_SOURCE` from `scripts/config.py`
+- experiment name: `EXPERIMENT_NAME` from `scripts/config.py`
+- checkpoint step: `DEFAULT_EVAL_STEP` from `scripts/config.py`
 - decoding preset: whatever is passed with `--preset`
 
-Evaluate the trained LoRA checkpoint:
+Evaluate a named trained LoRA checkpoint:
 
 ```bash
 cd /home/codexdev-tjh200/tpu-2026-1
-/home/shared/tpu-2026/venvs/tunix/bin/python scripts/evaluate.py --step 3364 --preset greedy --source kaggle
+/home/shared/tpu-2026/venvs/tunix/bin/python scripts/evaluate.py --experiment-name my-run --step 3364 --preset greedy --source kaggle
 ```
 
 Expected confirmation:
 
 ```text
-Restored LoRA params from /home/shared/ckpts/actor/3364
+Restored LoRA params from /home/shared/ckpts/my-run/actor/3364
+```
+
+For the legacy checkpoint layout, omit `--experiment-name`:
+
+```bash
+/home/shared/tpu-2026/venvs/tunix/bin/python scripts/evaluate.py --step 3364 --preset greedy --source kaggle
 ```
 
 Evaluate the baseline base model without LoRA:
@@ -159,7 +182,7 @@ Evaluating base model without LoRA.
 Use `--step 0` to restore the latest checkpoint in the checkpoint directory:
 
 ```bash
-/home/shared/tpu-2026/venvs/tunix/bin/python scripts/evaluate.py --step 0 --preset greedy --source kaggle
+/home/shared/tpu-2026/venvs/tunix/bin/python scripts/evaluate.py --experiment-name my-run --step 0 --preset greedy --source kaggle
 ```
 
 The evaluation reports:
