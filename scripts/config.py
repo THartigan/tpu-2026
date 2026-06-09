@@ -14,7 +14,7 @@ GEMMA_TOKENIZER_PATH = "gs://gemma-data/tokenizers/tokenizer_gemma3.model"
 TRAIN_DATA_DIR = "./data/train"
 TEST_DATA_DIR = "./data/test"
 TRAIN_FRACTION = 0.9
-DATA_SOURCE = os.environ.get("DATA_SOURCE", "tfds")  # "tfds" or "kaggle"
+DATA_SOURCE = os.environ.get("DATA_SOURCE", "kaggle")  # "tfds" or "kaggle"
 EVAL_DATA_SOURCE = os.environ.get("EVAL_DATA_SOURCE", "kaggle")
 
 # ====== LoRA (parameter-efficient finetuning) ======
