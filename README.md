@@ -1,168 +1,212 @@
-# TPU 2026 — Student Access Guide
+# GRPO Fine-Tuning Gemma 3 on GSM8K
 
-Your team has a **dedicated Google Cloud TPU** (v6e-1) already running. These are
-provisioned for **7 days** — you do **not** need to create, start, or stop
-anything. Just connect and work.
+This repo trains `google/gemma-3-1b-it` on GSM8K using Tunix GRPO with LoRA
+adapters. The policy is rewarded for producing the expected
+`<reasoning>...</reasoning><answer>...</answer>` format and for returning the
+correct numeric answer.
 
-> ⚠️ **Do NOT switch the TPU off.** Don't run `sudo poweroff` / `shutdown` /
-> `halt`, and don't try to delete it. The machines are managed for you. If a VM
-> goes down it has to be re-provisioned by hand and your whole team loses access
-> until then. There is **no reason** to ever turn it off.
+## Repository Layout
 
----
+| Path | Purpose |
+| --- | --- |
+| `scripts/config.py` | Hyperparameters, checkpoint paths, W&B settings, dataset source defaults. |
+| `scripts/train.py` | Main GRPO training entry point. |
+| `scripts/evaluate.py` | Standalone evaluation for trained checkpoints or the base model. |
+| `scripts/chat.py` | Interactive generation from a checkpoint. |
+| `scripts/data.py` | GSM8K loading and prompt formatting. |
+| `scripts/rewards.py` | Reward functions used during GRPO. |
+| `bootstrap.sh` | Creates the Tunix/JAX Python environment. |
+| `requirements.txt` | Pinned package set used by `bootstrap.sh`. |
 
-## 1. One-time setup on your laptop
+## Installation
 
-1. **Install the Google Cloud CLI** (`gcloud`): https://cloud.google.com/sdk/docs/install
-   - macOS: `brew install --cask google-cloud-sdk`
-2. **Log in with the Gmail you registered** (the one in the class group — **NOT
-   your `@cam.ac.uk` account**):
-   ```bash
-   gcloud auth login          # pick your GMAIL in the browser
-   gcloud config set account <your-gmail>@gmail.com
-   gcloud config set project tpu-2026
-   ```
-
-That's it — no SSH keys to manage, no IPs to configure. Access is granted to your
-**Gmail** through the class Google Group.
-
-> ⚠️ The single most common error is being signed in with your **Cambridge**
-> account instead of your Gmail. If a command says it's `authenticated as
-> <crsid>@cam.ac.uk`, run `gcloud config set account <your-gmail>@gmail.com`
-> (or `gcloud auth login` and pick the Gmail). See **Troubleshooting** below.
-
----
-
-## 2. Find your team's machine
-
-The VM name is your **Team ID**. Find your crsid below to get your machine:
-
-| Team | VM name | Members (crsid) |
-|------|---------|-----------------|
-| aldimu | `aldimu` | cm2327, eja69, eid23 |
-| waxvhe | `waxvhe` | zw491, cx272, sh2396 |
-| begrla | `begrla` | fl482, bg492, hb747 |
-| fugupf | `fugupf` | anp50, qf226, bag36 |
-| fajizh | `fajizh` | yz2002, yf365, ezj20 |
-| depexu | `depexu` | zx332, tp534, yd388 |
-| chlina | `chlina` | zl656, un212, xc401 |
-| chmawa | `chmawa` | sm3035, bc654, zw499 |
-| hamcpaso | `hamcpaso` | tjh200, ep787, rs2398, cm2306 |
-| dakolo | `dakolo` | bk489, ol306, rd761 |
-| chfazhvi | `chfazhvi` | Nf425, sz519, nc680, iv294 |
-| ya | `ya-team` | yy617, py245, tg561 |
-| giab | `giab` | dg728, aa2730 |
-
-> Note: the `ya` team's machine is called **`ya-team`** (names must be ≥3 characters).
-
-Set it once per terminal:
-```bash
-export TEAM=<your-vm-name>      # e.g. export TEAM=fugupf
-```
-
----
-
-## 3. Connect (SSH)
-
-The VMs have no public IP, so you connect through Google's **IAP tunnel**
-(this needs the `alpha` component — gcloud will offer to install it the first time):
-
-```bash
-gcloud alpha compute tpus tpu-vm ssh $TEAM \
-  --zone=us-east5-a --project=tpu-2026 --tunnel-through-iap
-```
-
-The first connection takes ~30s while your key propagates. You land in a shared
-Linux home directory on the TPU VM. You have **sudo**, so you can install anything
-(`sudo apt install ...`, `pip install ...`, etc.).
-
----
-
-## 4. Set up the Python / JAX / tunix environment
-
-Everything you need is in this repo. On the VM:
+From a TPU VM with Python 3.12 available:
 
 ```bash
 git clone https://github.com/borisbolliet/tpu-2026.git
 cd tpu-2026
-./bootstrap.sh          # creates the venv and installs jax + tunix + flax + libtpu
+./bootstrap.sh
 ```
 
-Verify the TPU is visible:
+Activate the environment:
+
 ```bash
 source ~/venvs/tunix/bin/activate
+```
+
+On this VM, the shared environment is also available at:
+
+```bash
+source /home/shared/tpu-2026/venvs/tunix/bin/activate
+```
+
+Set credentials before training or downloading data/models. A local `.env` file
+is supported by `scripts/train.py`:
+
+```bash
+WANDB_API_KEY=...
+HF_TOKEN=...
+KAGGLE_USERNAME=...
+KAGGLE_KEY=...
+```
+
+Check that JAX sees the TPU:
+
+```bash
 python -c "import jax; print(jax.default_backend(), jax.devices())"
-# expect: tpu [TpuDevice(...)]
 ```
 
-Full details of what `bootstrap.sh` does (and how to do it by hand) are in
-**[`tpu-setup.md`](tpu-setup.md)**.
+## Training
 
----
+Run training from the `scripts` directory:
 
-## 5. JupyterLab
-
-Two terminals on your laptop.
-
-**Terminal 1** — open the tunnel (leave it running):
 ```bash
-gcloud alpha compute tpus tpu-vm ssh $TEAM --zone=us-east5-a --project=tpu-2026 \
-  --tunnel-through-iap -- -L 8888:localhost:8888 -N
+cd /home/codexdev-tjh200/tpu-2026-1/scripts
+/home/shared/tpu-2026/venvs/tunix/bin/python train.py --source kaggle
 ```
 
-**Terminal 2** — SSH in and launch Jupyter on the TPU:
+For long runs, use `tmux` so training survives SSH disconnects:
+
 ```bash
-gcloud alpha compute tpus tpu-vm ssh $TEAM --zone=us-east5-a --project=tpu-2026 --tunnel-through-iap
-# then on the VM:
-source ~/venvs/tunix/bin/activate
-jupyter lab --no-browser --port=8888 --ip=127.0.0.1
+tmux new -s tunix
+cd /home/codexdev-tjh200/tpu-2026-1/scripts
+source /home/shared/tpu-2026/venvs/tunix/bin/activate
+python -u train.py --source kaggle 2>&1 | tee -a train.log
 ```
 
-Open the printed `http://127.0.0.1:8888/lab?token=...` URL in your laptop browser,
-and pick the **tunix** kernel. (TensorBoard works the same way on port 6006 — see
-`tpu-setup.md`.)
+Detach with `Ctrl-b d`, reattach with:
 
----
-
-## 6. Save your work — the VM is temporary
-
-The TPUs **auto-delete after 7 days**, and anything left only on the VM is gone
-when that happens. **Push your code to GitHub** (or copy results off the VM)
-regularly. See the "Pushing changes back from the TPU VM" section of
-[`tpu-setup.md`](tpu-setup.md) for the git-over-HTTPS + token recipe.
-
----
-
-## Bonus: run Claude Code / Codex on the TPU
-
-Once you've SSH'd in, you can install and run coding agents (Claude Code, Codex,
-etc.) right on the VM and let them drive your TPU experiments. The VM has
-outbound internet via Cloud NAT, so the usual installers work.
-
----
-
-## Troubleshooting
-
-**`PERMISSION_DENIED: Permission 'tpu.nodes.get' denied ... authenticated as
-<crsid>@cam.ac.uk`**
-You're signed in with your **Cambridge** account, which has no access. Switch to
-your Gmail:
 ```bash
-gcloud auth login                                  # choose your GMAIL
-gcloud config set account <your-gmail>@gmail.com
-gcloud config list account                         # confirm it shows your gmail
+tmux attach -t tunix
 ```
 
-**`PERMISSION_DENIED: Permission 'tpu.nodes.update' denied`**
-This means access is granted but hadn't fully propagated yet, or you're still on
-the wrong account. Confirm you're on your Gmail (above), wait ~2 minutes, and
-retry. If it persists, message the lab channel with your crsid + Gmail.
+Training checkpoints are configured in `scripts/config.py` and currently write
+under:
 
-**It hangs / "key propagating" on first connect**
-The first SSH can take ~30s while your key is pushed to the VM. That's normal.
+```text
+/home/shared/ckpts/
+```
 
----
+The actor checkpoint used for evaluation is:
 
-## Questions?
+```text
+/home/shared/ckpts/actor/3364
+```
 
-Ask in the **lab channel on Discord**.
+To resume the same W&B run, pass the run id:
+
+```bash
+WANDB_RUN_ID=<run-id> /home/shared/tpu-2026/venvs/tunix/bin/python train.py --source kaggle --wandb-run-id <run-id>
+```
+
+## Monitoring
+
+TensorBoard logs are written to:
+
+```text
+/home/shared/tensorboard/grpo
+```
+
+Start TensorBoard on the TPU VM:
+
+```bash
+tensorboard --logdir /home/shared/tensorboard/grpo --port 6006 --host 127.0.0.1
+```
+
+Then forward port `6006` from your local machine if needed and open:
+
+```text
+http://localhost:6006
+```
+
+W&B logging is initialized by `scripts/train.py` before the Tunix trainer is
+constructed. Project/entity defaults are in `scripts/config.py`.
+
+## Evaluation
+
+`scripts/evaluate.py` now defaults to:
+
+- dataset source: `kaggle`
+- trained checkpoint: `/home/shared/ckpts/actor/3364`
+- decoding preset: whatever is passed with `--preset`
+
+Evaluate the trained LoRA checkpoint:
+
+```bash
+cd /home/codexdev-tjh200/tpu-2026-1
+/home/shared/tpu-2026/venvs/tunix/bin/python scripts/evaluate.py --step 3364 --preset greedy --source kaggle
+```
+
+Expected confirmation:
+
+```text
+Restored LoRA params from /home/shared/ckpts/actor/3364
+```
+
+Evaluate the baseline base model without LoRA:
+
+```bash
+cd /home/codexdev-tjh200/tpu-2026-1
+/home/shared/tpu-2026/venvs/tunix/bin/python scripts/evaluate.py --baseline --preset greedy --source kaggle
+```
+
+Expected confirmation:
+
+```text
+Evaluating base model without LoRA.
+```
+
+Use `--step 0` to restore the latest checkpoint in the checkpoint directory:
+
+```bash
+/home/shared/tpu-2026/venvs/tunix/bin/python scripts/evaluate.py --step 0 --preset greedy --source kaggle
+```
+
+The evaluation reports:
+
+- exact numeric accuracy
+- partial accuracy within 10%
+- format accuracy for the expected reasoning/answer template
+
+## Interactive Chat
+
+Load a checkpoint and prompt the policy interactively:
+
+```bash
+cd /home/codexdev-tjh200/tpu-2026-1/scripts
+/home/shared/tpu-2026/venvs/tunix/bin/python chat.py --ckpt-dir /home/shared/ckpts/actor --step 3364 --preset greedy
+```
+
+Useful flags:
+
+| Flag | Meaning |
+| --- | --- |
+| `--step N` | Load checkpoint step `N`; `0` means latest. |
+| `--ckpt-dir PATH` | Directory containing actor checkpoint step folders. |
+| `--preset greedy|standard|liberal` | Sampling preset from `scripts/config.py`. |
+| `--no-template` | Prompt the model without the GSM8K wrapper. |
+| `--no-restore` | Skip checkpoint restore. |
+
+## Common Issues
+
+If evaluation crashes inside TensorFlow Datasets with:
+
+```text
+'google._upb._message.FieldDescriptor' object has no attribute 'label'
+```
+
+use the Kaggle source explicitly:
+
+```bash
+/home/shared/tpu-2026/venvs/tunix/bin/python scripts/evaluate.py --step 3364 --preset greedy --source kaggle
+```
+
+If evaluation prints `Restored LoRA params...` and then crashes, checkpoint
+loading succeeded; the failure is later in dataset loading or generation.
+
+If JAX reports a TPU lockfile error, another process may still own libtpu.
+Stop stale training/evaluation processes before retrying.
+
+For GRPO runs, negative policy-gradient losses can be normal. Judge training
+quality mainly from eval reward, exact accuracy, format accuracy, KL, and
+checkpoint comparisons against the baseline model.
