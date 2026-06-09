@@ -176,7 +176,7 @@ work over the SSH tunnel and is more trouble than it's worth):
 
 ```bash
 source ~/venvs/tunix/bin/activate
-tensorboard --logdir /tmp/content/tmp/tensorboard/grpo --port=6006 --host=127.0.0.1
+tensorboard --logdir /home/shared/tensorboard/grpo --port=6006 --host=127.0.0.1
 ```
 
 Then add a port-forward for 6006 alongside the Jupyter one. Easiest is a

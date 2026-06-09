@@ -66,9 +66,9 @@ MAX_GRAD_NORM = 0.1        # tight clipping keeps KL well-behaved
 
 # ====== Checkpointing ======
 # NOTE: /tmp is volatile. For long runs, point this at persistent storage.
-INTERMEDIATE_CKPT_DIR = "/tmp/content/intermediate_ckpt/"
-CKPT_DIR = "/tmp/content/ckpts/"
-TENSORBOARD_DIR = "/tmp/content/tmp/tensorboard/grpo"
+INTERMEDIATE_CKPT_DIR = "/home/shared/intermediate_ckpt/"
+CKPT_DIR = "/home/shared/ckpts/"
+TENSORBOARD_DIR = "/home/shared/tensorboard/grpo"
 SAVE_INTERVAL_STEPS = 500
 MAX_TO_KEEP = 4
 
@@ -83,5 +83,5 @@ GENERATION_CONFIGS = {
 # Set WANDB_RUN_ID in env to resume an existing run (e.g. "bnh9ttlt").
 # Project + entity must match the existing run, otherwise wandb won't find it.
 WANDB_PROJECT = os.environ.get("WANDB_PROJECT", "tunix")
-WANDB_ENTITY = os.environ.get("WANDB_ENTITY", "milindsarkaryt-iiser-mohali")
+WANDB_ENTITY = os.environ.get("WANDB_ENTITY", "tjh200-university-of-cambridge")
 WANDB_RUN_ID = os.environ.get("WANDB_RUN_ID", None)

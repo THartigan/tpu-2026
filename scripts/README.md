@@ -158,7 +158,7 @@ the first time.
 
 ### 7b. TensorBoard (running on a remote TPU VM)
 
-Tunix writes scalar events to `TENSORBOARD_DIR` (`/tmp/content/tmp/tensorboard/grpo`)
+Tunix writes scalar events to `TENSORBOARD_DIR` (`/home/shared/tensorboard/grpo`)
 every 20 steps. To view them from your laptop you need two things:
 
 **1. A TensorBoard server on the TPU VM, bound to localhost.** Bind to
@@ -168,7 +168,7 @@ TensorBoard reachable from the internet.
 ```bash
 # On the TPU VM, in any tmux pane (or with nohup so it survives shell exit):
 nohup tensorboard \
-    --logdir /tmp/content/tmp/tensorboard/grpo \
+    --logdir /home/shared/tensorboard/grpo \
     --port 6006 --host 127.0.0.1 \
     > ~/tpu-2026/scripts/tb.log 2>&1 &
 disown
