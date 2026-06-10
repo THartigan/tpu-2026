@@ -12,15 +12,37 @@ immediately:
   3. check_answer                — exact / close / wrong numeric match
   4. check_numbers               — fallback that just extracts a number
   5. discourage_short_outputs    — small guardrail against degenerate collapse
+  6. discourage_long_outputs     — small guardrail against runaway completions
 
-The total per-rollout reward is the sum across all five. GRPO then normalises
+The total per-rollout reward is the sum across all six. GRPO then normalises
 this within the group of G rollouts to compute the advantage. This is the
 "group-relative" part of GRPO: no value network is learned; advantages come
 from comparing siblings drawn from the same prompt.
 """
+from decimal import Decimal, InvalidOperation
+from fractions import Fraction
 import re
 
 from data import reasoning_start, reasoning_end, solution_start, solution_end
+
+FORMAT_REWARD_WARMUP_STEPS = 500
+FORMAT_REWARD_POST_WARMUP_SCALE = 0.25
+
+ANSWER_EXACT_REWARD = 5.0
+ANSWER_STRIPPED_REWARD = 2.5
+ANSWER_WITHIN_10_PERCENT_REWARD = 0.5
+ANSWER_WITHIN_20_PERCENT_REWARD = 0.25
+ANSWER_WRONG_NUMERIC_PENALTY = -1.0
+ANSWER_UNPARSEABLE_PENALTY = -0.5
+
+NUMBER_EXACT_REWARD = 2.0
+
+LONG_OUTPUT_START_TOKENS = 512
+LONG_OUTPUT_STRONG_TOKENS = 640
+LONG_OUTPUT_PENALTY = -0.25
+LONG_OUTPUT_STRONG_PENALTY = -0.5
+
+_LATEST_TRAIN_STEP = 0
 
 
 match_format = re.compile(
@@ -31,22 +53,94 @@ match_format = re.compile(
     flags=re.MULTILINE | re.DOTALL,
 )
 
+number_pattern = re.compile(
+    r"-?\s*\$?\s*(?:\d+\s*/\s*\d+|\d[\d,]*(?:\.\d+)?)\s*%?"
+)
+
 match_numbers = re.compile(
-    rf"{solution_start}.*?([\d\.]{{1,}})",
+    rf"{solution_start}.*?({number_pattern.pattern})",
     flags=re.MULTILINE | re.DOTALL,
 )
 
 
+def _reward_step(kwargs):
+    """Infer the current train step from GRPO trajectory ids."""
+    global _LATEST_TRAIN_STEP
+    mode = str(kwargs.get("mode", "")).lower()
+    trajectory_ids = kwargs.get("trajectory_ids")
+    if trajectory_ids is None:
+        trajectory_ids = []
+    steps = []
+    for trajectory_id in trajectory_ids:
+        try:
+            steps.append(int(str(trajectory_id).split("_", 1)[0]))
+        except (TypeError, ValueError):
+            pass
+    if mode.endswith("train") and steps:
+        _LATEST_TRAIN_STEP = max(_LATEST_TRAIN_STEP, min(steps))
+    return _LATEST_TRAIN_STEP
+
+
+def _format_reward_scale(kwargs):
+    return (
+        FORMAT_REWARD_POST_WARMUP_SCALE
+        if _reward_step(kwargs) >= FORMAT_REWARD_WARMUP_STEPS
+        else 1.0
+    )
+
+
+def _extract_number(text):
+    if text is None:
+        return None
+    match = number_pattern.search(str(text))
+    return match.group(0) if match is not None else None
+
+
+def _normalise_number(text):
+    number = _extract_number(text)
+    if number is None:
+        return None
+    s = number.strip().replace(" ", "").replace("$", "").replace(",", "")
+    is_percent = s.endswith("%")
+    if is_percent:
+        s = s[:-1]
+    try:
+        if "/" in s:
+            value = Decimal(Fraction(s).numerator) / Decimal(Fraction(s).denominator)
+        else:
+            value = Decimal(s)
+    except (InvalidOperation, ValueError, ZeroDivisionError):
+        return None
+    return value / Decimal(100) if is_percent else value
+
+
+def _numeric_ratio(guess, true):
+    guess_value = _normalise_number(guess)
+    true_value = _normalise_number(true)
+    if guess_value is None or true_value is None or true_value == 0:
+        return None
+    return abs(guess_value / true_value)
+
+
+def _estimated_tokens(text):
+    stripped = str(text).strip()
+    if not stripped:
+        return 0
+    return max(len(stripped.split()), len(stripped) // 4)
+
+
 def match_format_exactly(prompts, completions, **kwargs):
     """+3 if the whole template parses, 0 otherwise."""
+    scale = _format_reward_scale(kwargs)
     return [
-        0 if match_format.search(r) is None else 3.0
+        0 if match_format.search(r) is None else 3.0 * scale
         for r in completions
     ]
 
 
 def match_format_approximately(prompts, completions, **kwargs):
     """Up to +2.5 for having each of the five expected tags exactly once."""
+    scale = _format_reward_scale(kwargs)
     scores = []
     for response in completions:
         s = 0.0
@@ -55,7 +149,7 @@ def match_format_approximately(prompts, completions, **kwargs):
         s += 0.5 if response.count(reasoning_end) == 1 else 0.0
         s += 0.5 if response.count(solution_start) == 1 else 0.0
         s += 0.5 if response.count(solution_end) == 1 else 0.0
-        scores.append(s)
+        scores.append(s * scale)
     return scores
 
 
@@ -77,6 +171,20 @@ def discourage_short_outputs(prompts, completions, **kwargs):
     return scores
 
 
+def discourage_long_outputs(prompts, completions, **kwargs):
+    """Small penalty for completions that run close to the token cap."""
+    scores = []
+    for response in completions:
+        tokens = _estimated_tokens(response)
+        if tokens >= LONG_OUTPUT_STRONG_TOKENS:
+            scores.append(LONG_OUTPUT_STRONG_PENALTY)
+        elif tokens >= LONG_OUTPUT_START_TOKENS:
+            scores.append(LONG_OUTPUT_PENALTY)
+        else:
+            scores.append(0.0)
+    return scores
+
+
 def check_answer(prompts, completions, answer, **kwargs):
     """Reward correctness of the bracketed answer with partial credit."""
     extracted = [
@@ -90,21 +198,24 @@ def check_answer(prompts, completions, answer, **kwargs):
         if guess is None:
             scores.append(0)
             continue
-        if guess == true:
-            scores.append(3.0)
+        guess_value = _normalise_number(guess)
+        true_value = _normalise_number(true)
+        if guess_value is not None and true_value is not None and guess_value == true_value:
+            scores.append(ANSWER_EXACT_REWARD)
+        elif guess == true:
+            scores.append(ANSWER_EXACT_REWARD)
         elif guess.strip() == true.strip():
-            scores.append(1.5)
+            scores.append(ANSWER_STRIPPED_REWARD)
         else:
-            try:
-                ratio = float(guess) / float(true)
-                if 0.9 <= ratio <= 1.1:
-                    scores.append(0.5)
-                elif 0.8 <= ratio <= 1.2:
-                    scores.append(0.25)
-                else:
-                    scores.append(-1.0)
-            except Exception:
-                scores.append(-0.5)
+            ratio = _numeric_ratio(guess, true)
+            if ratio is None:
+                scores.append(ANSWER_UNPARSEABLE_PENALTY)
+            elif Decimal("0.9") <= ratio <= Decimal("1.1"):
+                scores.append(ANSWER_WITHIN_10_PERCENT_REWARD)
+            elif Decimal("0.8") <= ratio <= Decimal("1.2"):
+                scores.append(ANSWER_WITHIN_20_PERCENT_REWARD)
+            else:
+                scores.append(ANSWER_WRONG_NUMERIC_PENALTY)
     return scores
 
 
@@ -128,10 +239,13 @@ def check_numbers(prompts, completions, answer, **kwargs):
         if guess is None:
             scores.append(0)
             continue
-        try:
-            scores.append(1.5 if float(guess.strip()) == float(true.strip()) else 0.0)
-        except Exception:
-            scores.append(0)
+        guess_value = _normalise_number(guess)
+        true_value = _normalise_number(true)
+        scores.append(
+            NUMBER_EXACT_REWARD
+            if guess_value is not None and true_value is not None and guess_value == true_value
+            else 0.0
+        )
     return scores
 
 
@@ -139,6 +253,7 @@ REWARD_FNS = [
     match_format_exactly,
     match_format_approximately,
     discourage_short_outputs,
+    discourage_long_outputs,
     check_answer,
     check_numbers,
 ]

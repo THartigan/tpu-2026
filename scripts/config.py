@@ -42,11 +42,11 @@ TOTAL_GENERATION_STEPS = 768
 TEMPERATURE = 0.7          # conservative rollout sampling reduces noisy rewards
 TOP_P = 0.95
 TOP_K = 50
-NUM_GENERATIONS = 16        # G in the GRPO paper — group size for advantage norm
+NUM_GENERATIONS = 12        # G in the GRPO paper — group size for advantage norm
 
 # ====== GRPO loss ======
 NUM_ITERATIONS = 1         # mu — PPO-style inner optimisation passes per batch
-BETA = 0.15                # KL penalty coefficient (anchors to reference model)
+BETA = 0.10                # KL penalty coefficient (anchors to reference model)
 EPSILON = 0.2              # PPO-style clip range
 
 # ====== Training ======
