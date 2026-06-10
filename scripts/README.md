@@ -110,9 +110,17 @@ If you prefer to do it yourself:
 ```bash
 tmux new -s tunix
 source ~/venvs/tunix/bin/activate && cd ~/tpu-2026/scripts
-python train.py
+python train.py --experiment-name my-run
 # Ctrl-b d to detach
 ```
+
+During training, `NUM_EVAL_BATCHES` examples are held out from the shuffled
+GSM8K train split for lightweight eval. The rest of the train split is used for
+training. By default, training stops after `MAX_STEPS` or after the wall-time
+budget in `MAX_WALL_TIME_HOURS`, whichever comes first. Pass
+`--max-wall-time-hours 0` to disable the wall-time limit. Pass
+`--save-best-eval-check-answer` to force-save a checkpoint whenever eval
+`check_answer` reaches a new high.
 
 ## 6. Resuming after a crash
 
@@ -209,22 +217,28 @@ What to look for:
 
 | Knob                  | Default | Effect of increasing                                |
 |-----------------------|---------|-----------------------------------------------------|
-| `NUM_GENERATIONS` (G) | 2       | Lower-variance advantages, but G× more compute.     |
-| `BETA` (β)            | 0.08    | Stronger anchor to base model — slower learning.    |
+| `NUM_GENERATIONS` (G) | 12      | Lower-variance advantages, but G× more compute.     |
+| `BETA` (β)            | 0.10    | Stronger anchor to base model — slower learning.    |
 | `EPSILON` (ε)         | 0.2     | Larger trust region — faster but riskier updates.   |
-| `LEARNING_RATE`       | 3e-6    | Standard knob; KL drift scales with this.           |
+| `LEARNING_RATE`       | 1e-6    | Standard knob; KL drift scales with this.           |
 | `MAX_GRAD_NORM`       | 0.1     | Tight clipping; loosen if loss plateaus.            |
 | `RANK` (LoRA)         | 64      | More adapter capacity, more KL drift potential.     |
-| `TEMPERATURE`         | 0.9     | Diversity within each group of G rollouts.          |
+| `TEMPERATURE`         | 0.7     | Diversity within each group of G rollouts.          |
+| `TOP_P`               | 0.95    | Nucleus sampling cutoff for rollout diversity.      |
+| `NUM_EVAL_BATCHES`    | 50      | During-training eval set size.                      |
+| `EVAL_EVERY_N_STEPS`  | 250     | Frequency of lightweight eval during training.      |
+| `MAX_WALL_TIME_HOURS` | 5       | Graceful wall-time cap for training.                |
 
 ## 9. Standalone evaluation
 
 To benchmark the *base* model (no training) before/after a run:
 ```bash
-python evaluate.py --preset greedy
+python evaluate.py --experiment-name my-run --step 0 --preset greedy
 ```
 Greedy decoding gives a deterministic number you can compare against. Use
-`--preset standard` for a sampling-based estimate.
+`--preset standard` for a sampling-based estimate. Standalone evaluation uses
+the full Kaggle GSM8K test split by default; during-training eval is the small
+50-question holdout controlled by `NUM_EVAL_BATCHES`.
 
 ## 10. Interactive chat with a trained checkpoint
 

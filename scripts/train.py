@@ -14,6 +14,7 @@ Tunix's RLCluster uses Orbax and will pick up the latest step in CKPT_DIR.
 import argparse
 import os
 import re
+import time
 
 import nest_asyncio
 import optax
@@ -37,8 +38,10 @@ from config import (
     MAX_GRAD_NORM,
     MAX_PROMPT_LENGTH,
     MAX_STEPS,
+    MAX_WALL_TIME_HOURS,
     MAX_TO_KEEP,
     NUM_BATCHES,
+    NUM_EVAL_BATCHES,
     NUM_EPOCHS,
     NUM_GENERATIONS,
     NUM_ITERATIONS,
@@ -60,7 +63,77 @@ from config import (
 )
 from data import build_train_val_test
 from model import build_mesh, download_weights, load_base_model, get_lora_model, load_tokenizer
-from rewards import REWARD_FNS
+from rewards import REWARD_FNS, latest_eval_check_answer
+
+
+class WallTimeLimitedIterable:
+    """Stop yielding training batches once the wall-time budget is exhausted."""
+
+    def __init__(self, dataset, max_hours: float | None):
+        self.dataset = dataset
+        self.max_hours = max_hours
+        self.deadline = None if max_hours is None else time.monotonic() + max_hours * 3600
+        self._reported = False
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def __iter__(self):
+        for item in self.dataset:
+            if self.deadline is not None and time.monotonic() >= self.deadline:
+                if not self._reported:
+                    print(f"Wall-time limit reached after {self.max_hours:g} hours; stopping training.")
+                    self._reported = True
+                return
+            yield item
+
+
+class BestEvalCheckAnswerCheckpointHook:
+    """Force-save an actor checkpoint whenever eval check_answer improves."""
+
+    def __init__(self):
+        self.best = None
+
+    def on_train_start(self, train_ctx):
+        pass
+
+    def on_train_end(self, train_ctx):
+        pass
+
+    def on_train_step_start(self, train_ctx):
+        pass
+
+    def on_train_step_end(self, train_ctx, train_step, train_loss):
+        pass
+
+    def on_eval_step_start(self, train_ctx):
+        pass
+
+    def on_eval_step_end(self, train_ctx, eval_loss):
+        score = latest_eval_check_answer()
+        if score is None or (self.best is not None and score <= self.best):
+            return
+
+        self.best = score
+        step = train_ctx.train_steps
+        if step <= 0 or train_ctx.config.checkpoint_root_directory is None:
+            print(f"New best eval check_answer={score:.4f} at step {step}; skipping checkpoint.")
+            return
+
+        step_dir = os.path.join(train_ctx.config.checkpoint_root_directory, str(step))
+        if os.path.exists(step_dir):
+            print(f"New best eval check_answer={score:.4f} at step {step}; checkpoint already exists.")
+            return
+
+        saved = train_ctx.checkpoint_manager.save(
+            step,
+            train_ctx.model,
+            train_ctx.optimizer,
+            save_only_lora_params=train_ctx._lora_enabled,
+            force=True,
+            custom_metadata=train_ctx.custom_checkpoint_metadata(),
+        )
+        print(f"New best eval check_answer={score:.4f} at step {step}; checkpoint saved={saved}.")
 
 
 def experiment_path(root: str, experiment_name: str | None) -> str:
@@ -153,6 +226,10 @@ def main():
                     help="Optional run name. Stores checkpoints under CKPT_DIR/<name>/ and TensorBoard under TENSORBOARD_DIR/<name>/")
     ap.add_argument("--wandb-run-id", default=WANDB_RUN_ID,
                     help="Pass an existing run id (e.g. bnh9ttlt) to resume.")
+    ap.add_argument("--max-wall-time-hours", type=float, default=MAX_WALL_TIME_HOURS,
+                    help=f"Training wall-time limit in hours. Default: {MAX_WALL_TIME_HOURS}. Use 0 to disable.")
+    ap.add_argument("--save-best-eval-check-answer", action="store_true",
+                    help="Force-save a checkpoint whenever eval check_answer reaches a new high.")
     args = ap.parse_args()
     if not args.experiment_name:
         ap.error("--experiment-name is required for training.")
@@ -173,9 +250,12 @@ def main():
 
     train_ds, val_ds, _ = build_train_val_test(
         NUM_BATCHES, NUM_TEST_BATCHES, TRAIN_MICRO_BATCH_SIZE, TRAIN_FRACTION,
-        NUM_EPOCHS, TRAIN_DATA_DIR, TEST_DATA_DIR, source=args.source,
+        NUM_EPOCHS, TRAIN_DATA_DIR, TEST_DATA_DIR,
+        num_eval_batches=NUM_EVAL_BATCHES, source=args.source,
     )
     print(f"Datasets: train={len(train_ds)} val={len(val_ds) if val_ds else 0}")
+    max_wall_time_hours = None if args.max_wall_time_hours <= 0 else args.max_wall_time_hours
+    train_ds = WallTimeLimitedIterable(train_ds, max_wall_time_hours)
 
     optimizer = build_optimizer()
     cluster_cfg = build_cluster_config(mesh, optimizer, eos_tokens, ckpt_dir, tensorboard_dir)
@@ -190,10 +270,13 @@ def main():
         actor=lora, reference=base, tokenizer=tokenizer, cluster_config=cluster_cfg,
     )
     trainer = GRPOLearner(rl_cluster=rl_cluster, reward_fns=REWARD_FNS, algo_config=grpo_cfg)
+    if args.save_best_eval_check_answer:
+        trainer.rl_cluster.actor_trainer.with_training_hooks(BestEvalCheckAnswerCheckpointHook())
 
     print(
         f"Starting GRPO training. CKPT_DIR={ckpt_dir}  "
-        f"TENSORBOARD_DIR={tensorboard_dir}  MAX_STEPS={MAX_STEPS}"
+        f"TENSORBOARD_DIR={tensorboard_dir}  MAX_STEPS={MAX_STEPS}  "
+        f"MAX_WALL_TIME_HOURS={max_wall_time_hours}"
     )
     trainer.train(train_ds, val_ds)
     print("Training finished.")

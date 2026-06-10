@@ -44,6 +44,7 @@ LONG_OUTPUT_PENALTY = -0.25
 LONG_OUTPUT_STRONG_PENALTY = -0.5
 
 _LATEST_TRAIN_STEP = 0
+_LATEST_EVAL_CHECK_ANSWER_VALUES = []
 
 
 match_format = re.compile(
@@ -191,6 +192,7 @@ def discourage_long_outputs(prompts, completions, **kwargs):
 
 def check_answer(prompts, completions, answer, **kwargs):
     """Reward correctness of the bracketed answer with partial credit."""
+    global _LATEST_EVAL_CHECK_ANSWER_VALUES
     extracted = [
         guess.group(1) if r is not None and (guess := match_format.search(r)) is not None else None
         for r in completions
@@ -220,7 +222,25 @@ def check_answer(prompts, completions, answer, **kwargs):
                 scores.append(ANSWER_WITHIN_20_PERCENT_REWARD)
             else:
                 scores.append(ANSWER_WRONG_NUMERIC_PENALTY)
+    if str(kwargs.get("mode", "")).lower().endswith("eval") and scores:
+        trajectory_ids = kwargs.get("trajectory_ids") or []
+        eval_rows = []
+        for trajectory_id in trajectory_ids:
+            try:
+                eval_rows.append(int(str(trajectory_id).split("_", 1)[0]))
+            except (TypeError, ValueError):
+                pass
+        if eval_rows and min(eval_rows) == 0:
+            _LATEST_EVAL_CHECK_ANSWER_VALUES = []
+        _LATEST_EVAL_CHECK_ANSWER_VALUES.extend(scores)
     return scores
+
+
+def latest_eval_check_answer():
+    """Return the most recent eval check_answer mean seen by the reward fn."""
+    if not _LATEST_EVAL_CHECK_ANSWER_VALUES:
+        return None
+    return sum(_LATEST_EVAL_CHECK_ANSWER_VALUES) / len(_LATEST_EVAL_CHECK_ANSWER_VALUES)
 
 
 def check_numbers(prompts, completions, answer, **kwargs):

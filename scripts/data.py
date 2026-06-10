@@ -95,18 +95,28 @@ def get_dataset(data_dir: str, split: str = "train", source: str = "tfds") -> gr
     )
 
 
-def build_train_val_test(num_batches: int,
-                         num_test_batches: int,
+def build_train_val_test(num_batches: int | None,
+                         num_test_batches: int | None,
                          train_micro_batch_size: int,
                          train_fraction: float,
                          num_epochs: int,
                          train_dir: str,
                          test_dir: str,
+                         num_eval_batches: int | None = None,
                          source: str = "tfds"):
     """Materialise (train, val, test) datasets with batching applied."""
-    full = get_dataset(train_dir, "train", source).batch(train_micro_batch_size)[:num_batches]
+    full = get_dataset(train_dir, "train", source).batch(train_micro_batch_size)
+    if num_batches is not None:
+        full = full[:num_batches]
 
-    if train_fraction == 1.0:
+    if num_eval_batches is not None:
+        if num_eval_batches < 0:
+            raise ValueError("num_eval_batches must be non-negative.")
+        if num_eval_batches >= len(full):
+            raise ValueError("num_eval_batches must be smaller than the training set.")
+        val_ds = full[:num_eval_batches] if num_eval_batches else None
+        train_ds = full[num_eval_batches:].repeat(num_epochs)
+    elif train_fraction == 1.0:
         train_ds = full.repeat(num_epochs)
         val_ds = None
     else:
@@ -114,5 +124,7 @@ def build_train_val_test(num_batches: int,
         train_ds = full[:cut].repeat(num_epochs)
         val_ds = full[cut:].repeat(num_epochs)
 
-    test_ds = get_dataset(test_dir, "test", source).batch(train_micro_batch_size)[:num_test_batches]
+    test_ds = get_dataset(test_dir, "test", source).batch(train_micro_batch_size)
+    if num_test_batches is not None:
+        test_ds = test_ds[:num_test_batches]
     return train_ds, val_ds, test_ds

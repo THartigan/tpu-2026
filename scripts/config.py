@@ -51,12 +51,14 @@ EPSILON = 0.2              # PPO-style clip range
 
 # ====== Training ======
 TRAIN_MICRO_BATCH_SIZE = 1
-NUM_BATCHES = 3738
+NUM_BATCHES = None
+NUM_EVAL_BATCHES = 50
 NUM_TEST_BATCHES = 64
-EVAL_EVERY_N_STEPS = 64
+EVAL_EVERY_N_STEPS = 250
 NUM_EPOCHS = 1
-FULL_EPOCH_STEPS = int(NUM_BATCHES * NUM_ITERATIONS * TRAIN_FRACTION * NUM_EPOCHS)
-MAX_STEPS = int(os.environ.get("MAX_STEPS", str(FULL_EPOCH_STEPS)))
+FULL_EPOCH_STEPS = None
+MAX_STEPS = int(os.environ.get("MAX_STEPS", "7423"))
+MAX_WALL_TIME_HOURS = float(os.environ.get("MAX_WALL_TIME_HOURS", "5"))
 
 # ====== Optimiser ======
 LEARNING_RATE = 1e-6
