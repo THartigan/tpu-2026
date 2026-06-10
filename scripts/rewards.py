@@ -25,8 +25,9 @@ import re
 
 from data import reasoning_start, reasoning_end, solution_start, solution_end
 
-FORMAT_REWARD_WARMUP_STEPS = 500
-FORMAT_REWARD_POST_WARMUP_SCALE = 0.25
+FORMAT_REWARD_FULL_STEPS = 500
+FORMAT_REWARD_DECAY_STEPS = 500
+FORMAT_REWARD_FINAL_SCALE = 0.25
 
 ANSWER_EXACT_REWARD = 5.0
 ANSWER_STRIPPED_REWARD = 2.5
@@ -82,11 +83,14 @@ def _reward_step(kwargs):
 
 
 def _format_reward_scale(kwargs):
-    return (
-        FORMAT_REWARD_POST_WARMUP_SCALE
-        if _reward_step(kwargs) >= FORMAT_REWARD_WARMUP_STEPS
-        else 1.0
+    step = _reward_step(kwargs)
+    if step < FORMAT_REWARD_FULL_STEPS:
+        return 1.0
+    decay_progress = min(
+        1.0,
+        (step - FORMAT_REWARD_FULL_STEPS) / FORMAT_REWARD_DECAY_STEPS,
     )
+    return 1.0 - decay_progress * (1.0 - FORMAT_REWARD_FINAL_SCALE)
 
 
 def _extract_number(text):
