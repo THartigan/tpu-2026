@@ -23,6 +23,7 @@ from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 import re
 
+from config import TOTAL_GENERATION_STEPS
 from data import reasoning_start, reasoning_end, solution_start, solution_end
 
 FORMAT_REWARD_FULL_STEPS = 500
@@ -38,8 +39,11 @@ ANSWER_UNPARSEABLE_PENALTY = -0.5
 
 NUMBER_EXACT_REWARD = 2.0
 
-LONG_OUTPUT_START_TOKENS = 512
-LONG_OUTPUT_STRONG_TOKENS = 640
+# Length penalties scale with TOTAL_GENERATION_STEPS
+# Thresholds at 66.7% and 83.3% of the generation limit
+LONG_OUTPUT_START_TOKENS = round(TOTAL_GENERATION_STEPS * 0.667)
+LONG_OUTPUT_STRONG_TOKENS = round(TOTAL_GENERATION_STEPS * 0.833)
+
 LONG_OUTPUT_PENALTY = -0.25
 LONG_OUTPUT_STRONG_PENALTY = -0.5
 
