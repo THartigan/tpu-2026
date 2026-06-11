@@ -42,7 +42,8 @@ def extract_hash_answer(text: str) -> str | None:
     """GSM8K answers look like '...long explanation... #### 42'."""
     if "####" not in text:
         return None
-    return text.split("####")[1].strip()
+    ans = text.split("####")[1].strip()
+    return ans.split("\n")[0].strip()
 
 
 def _download_kaggle_dataset(target_dir: str = "./data/gsm8k") -> str:
@@ -75,6 +76,15 @@ def get_dataset(data_dir: str, split: str = "train", source: str = "tfds") -> gr
             reader = csv.DictReader(f)
             for row in reader:
                 data.append({"question": row["question"], "answer": row["answer"]})
+    elif source == "metamath":
+        from datasets import load_dataset
+        # MetaMathQA only has a train split
+        hf_dataset = load_dataset("meta-math/MetaMathQA", split="train")
+        data = []
+        for row in hf_dataset:
+            ans = row["response"]
+            if "####" in ans:
+                data.append({"question": row["query"], "answer": ans})
     else:
         raise ValueError(f"Unknown source: {source}")
 

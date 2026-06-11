@@ -221,7 +221,7 @@ def build_cluster_config(mesh, optimizer, eos_tokens, ckpt_dir: str, tensorboard
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--source", default=DATA_SOURCE, choices=["tfds", "kaggle"])
+    ap.add_argument("--source", default=DATA_SOURCE, choices=["tfds", "kaggle", "metamath"])
     ap.add_argument("--experiment-name", default=EXPERIMENT_NAME,
                     help="Optional run name. Stores checkpoints under CKPT_DIR/<name>/ and TensorBoard under TENSORBOARD_DIR/<name>/")
     ap.add_argument("--wandb-run-id", default=WANDB_RUN_ID,

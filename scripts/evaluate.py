@@ -162,7 +162,7 @@ def save_eval_result(args, ckpt_root: str, restored_step: int | None, result):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--preset", default="greedy", choices=list(GENERATION_CONFIGS))
-    ap.add_argument("--source", default=EVAL_DATA_SOURCE, choices=["tfds", "kaggle"],
+    ap.add_argument("--source", default=EVAL_DATA_SOURCE, choices=["tfds", "kaggle", "metamath"],
                     help="Dataset source for eval. Defaults to kaggle to avoid TFDS/protobuf issues.")
     ap.add_argument("--experiment-name", default=EXPERIMENT_NAME,
                     help=f"Optional experiment name. Looks for checkpoints under {CKPT_DIR}<name>/actor.")
