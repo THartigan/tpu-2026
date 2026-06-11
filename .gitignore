@@ -44,3 +44,4 @@ group_member_gmails.txt
 pending_gmails.txt
 Upload_*.log
 texput.log
+*.code-workspace

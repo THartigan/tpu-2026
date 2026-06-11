@@ -14,6 +14,7 @@ Tunix's RLCluster uses Orbax and will pick up the latest step in CKPT_DIR.
 import argparse
 import os
 import re
+import shutil
 import time
 
 import nest_asyncio
@@ -109,6 +110,15 @@ class BestEvalCheckAnswerCheckpointHook:
     def on_eval_step_start(self, train_ctx):
         pass
 
+    def _copy_best_checkpoint(self, step_dir: str, best_dir: str):
+        tmp_dir = f"{best_dir}.tmp"
+        if os.path.exists(tmp_dir):
+            shutil.rmtree(tmp_dir)
+        shutil.copytree(step_dir, tmp_dir, symlinks=True)
+        if os.path.exists(best_dir):
+            shutil.rmtree(best_dir)
+        os.rename(tmp_dir, best_dir)
+
     def on_eval_step_end(self, train_ctx, eval_loss):
         score = latest_eval_check_answer()
         if score is None or (self.best is not None and score <= self.best):
@@ -120,20 +130,32 @@ class BestEvalCheckAnswerCheckpointHook:
             print(f"New best eval check_answer={score:.4f} at step {step}; skipping checkpoint.")
             return
 
-        step_dir = os.path.join(train_ctx.config.checkpoint_root_directory, str(step))
-        if os.path.exists(step_dir):
-            print(f"New best eval check_answer={score:.4f} at step {step}; checkpoint already exists.")
+        actor_dir = train_ctx.config.checkpoint_root_directory
+        step_dir = os.path.join(actor_dir, str(step))
+        saved = os.path.exists(step_dir)
+        if not saved:
+            saved = train_ctx.checkpoint_manager.save(
+                step,
+                train_ctx.model,
+                train_ctx.optimizer,
+                save_only_lora_params=train_ctx._lora_enabled,
+                force=True,
+                custom_metadata=train_ctx.custom_checkpoint_metadata(),
+            )
+
+        if not os.path.exists(step_dir):
+            print(
+                f"New best eval check_answer={score:.4f} at step {step}; "
+                f"checkpoint saved={saved}, but {step_dir} was not found for best copy."
+            )
             return
 
-        saved = train_ctx.checkpoint_manager.save(
-            step,
-            train_ctx.model,
-            train_ctx.optimizer,
-            save_only_lora_params=train_ctx._lora_enabled,
-            force=True,
-            custom_metadata=train_ctx.custom_checkpoint_metadata(),
+        best_dir = os.path.join(os.path.dirname(actor_dir), "best_check_answer")
+        self._copy_best_checkpoint(step_dir, best_dir)
+        print(
+            f"New best eval check_answer={score:.4f} at step {step}; "
+            f"checkpoint saved={saved}; best copy updated at {best_dir}."
         )
-        print(f"New best eval check_answer={score:.4f} at step {step}; checkpoint saved={saved}.")
 
 
 def experiment_path(root: str, experiment_name: str | None) -> str:

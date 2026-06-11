@@ -120,7 +120,9 @@ training. By default, training stops after `MAX_STEPS` or after the wall-time
 budget in `MAX_WALL_TIME_HOURS`, whichever comes first. Pass
 `--max-wall-time-hours 0` to disable the wall-time limit. By default, training
 force-saves a checkpoint whenever eval `check_answer` reaches a new high; pass
-`--no-save-best-eval-check-answer` to disable this.
+`--no-save-best-eval-check-answer` to disable this. The current best checkpoint
+is also copied to `CKPT_DIR/<experiment>/best_check_answer`, outside the normal
+`actor/` retention policy, and is overwritten only by a later better checkpoint.
 
 ## 6. Resuming after a crash
 
