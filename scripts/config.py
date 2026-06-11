@@ -57,7 +57,7 @@ NUM_TEST_BATCHES = 64
 EVAL_EVERY_N_STEPS = 250
 NUM_EPOCHS = 1
 FULL_EPOCH_STEPS = None
-MAX_STEPS = int(os.environ.get("MAX_STEPS", "7423"))
+MAX_STEPS = int(os.environ.get("MAX_STEPS", "20000"))
 MAX_WALL_TIME_HOURS = float(os.environ.get("MAX_WALL_TIME_HOURS", "5"))
 
 # ====== Optimiser ======
