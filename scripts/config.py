@@ -75,7 +75,7 @@ MAX_GRAD_NORM = 0.1        # tight clipping keeps KL well-behaved
 # NOTE: /tmp is volatile. For long runs, point this at persistent storage.
 INTERMEDIATE_CKPT_DIR = "/home/shared/intermediate_ckpt/"
 CKPT_DIR = "/home/shared/ckpts/"
-TENSORBOARD_DIR = "/home/shared/tensorboard/grpo"
+TENSORBOARD_DIR = "/tmp/tensorboard/grpo"
 SAVE_INTERVAL_STEPS = 500
 MAX_TO_KEEP = 8
 EXPERIMENT_NAME = os.environ.get("EXPERIMENT_NAME", None)
