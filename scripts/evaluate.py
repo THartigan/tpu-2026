@@ -11,8 +11,10 @@ Run as:
 By default this restores the step configured by DEFAULT_EVAL_STEP in config.py.
 """
 import argparse
+import json
 import os
 import re
+from datetime import datetime, timezone
 
 from tqdm.auto import tqdm
 from tunix.generate import sampler as sampler_lib
@@ -39,6 +41,7 @@ from model import build_mesh, download_weights, load_base_model, get_lora_model,
 from rewards import match_format, match_numbers
 
 DEFAULT_CKPT_ROOT = os.path.join(CKPT_DIR, "actor")
+EVAL_RESULTS_DIR = "/home/shared/eval_results"
 
 
 def generate(question, sampler, eos_tokens, temperature=0.7, top_k=50, top_p=0.95, seed=None):
@@ -124,6 +127,38 @@ def checkpoint_root(ckpt_dir: str | None, experiment_name: str | None) -> str:
     return os.path.join(CKPT_DIR, experiment_name, "actor")
 
 
+def save_eval_result(args, ckpt_root: str, restored_step: int | None, result):
+    os.makedirs(EVAL_RESULTS_DIR, exist_ok=True)
+    correct, total, acc, partial_acc, format_acc = result
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    experiment = args.experiment_name or "custom_ckpt"
+    step_label = "baseline" if args.baseline else str(restored_step or "unrestored")
+    path = os.path.join(
+        EVAL_RESULTS_DIR,
+        f"{experiment}_step-{step_label}_{args.preset}_{timestamp}.json",
+    )
+    payload = {
+        "timestamp_utc": timestamp,
+        "experiment_name": args.experiment_name,
+        "ckpt_root": ckpt_root,
+        "requested_step": args.step,
+        "restored_step": restored_step,
+        "preset": args.preset,
+        "source": args.source,
+        "baseline": args.baseline,
+        "no_restore": args.no_restore,
+        "correct": correct,
+        "total": total,
+        "accuracy": acc,
+        "partial_accuracy": partial_acc,
+        "format_accuracy": format_acc,
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, indent=2, sort_keys=True)
+        f.write("\n")
+    return path
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--preset", default="greedy", choices=list(GENERATION_CONFIGS))
@@ -152,12 +187,14 @@ def main():
     if args.baseline:
         print("Evaluating base model without LoRA.")
         model = base
+        restored_step = None
     else:
         lora = get_lora_model(base, mesh)
         if args.no_restore:
             print("Skipping checkpoint restore.")
+            restored_step = None
         else:
-            restore_lora(lora, ckpt_root, None if args.step == 0 else args.step)
+            restored_step = restore_lora(lora, ckpt_root, None if args.step == 0 else args.step)
         model = lora
 
     _, _, test_ds = build_train_val_test(
@@ -175,8 +212,11 @@ def main():
             head_dim=cfg.head_dim,
         ),
     )
-    n, t, acc, pacc, facc = evaluate(test_ds, sampler, eos_tokens, **GENERATION_CONFIGS[args.preset])
+    result = evaluate(test_ds, sampler, eos_tokens, **GENERATION_CONFIGS[args.preset])
+    n, t, acc, pacc, facc = result
     print(f"\nFINAL: correct={n}/{t}  acc={acc:.2f}%  partial={pacc:.2f}%  format={facc:.2f}%")
+    result_path = save_eval_result(args, ckpt_root, restored_step, result)
+    print(f"Saved eval result to {result_path}")
 
 
 if __name__ == "__main__":

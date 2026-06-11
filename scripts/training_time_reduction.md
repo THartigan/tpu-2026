@@ -6,4 +6,4 @@ Standalone evaluation is separated from this lightweight training eval: `evaluat
 
 Training also has a wall-time budget via `MAX_WALL_TIME_HOURS`, defaulting to 5 hours. The `--max-wall-time-hours` flag can override this, and `--max-wall-time-hours 0` disables the cap. The wall-time limit stops by exhausting the training iterator, allowing Tunix to exit normally and run its final checkpoint close path.
 
-For checkpoint selection without frequent full evals, `train.py --save-best-eval-check-answer` force-saves an actor checkpoint whenever the lightweight eval `check_answer` reward reaches a new high.
+For checkpoint selection without frequent full evals, training force-saves an actor checkpoint whenever the lightweight eval `check_answer` reward reaches a new high. This is enabled by default; use `train.py --no-save-best-eval-check-answer` to disable it.

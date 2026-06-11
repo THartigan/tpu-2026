@@ -118,9 +118,9 @@ During training, `NUM_EVAL_BATCHES` examples are held out from the shuffled
 GSM8K train split for lightweight eval. The rest of the train split is used for
 training. By default, training stops after `MAX_STEPS` or after the wall-time
 budget in `MAX_WALL_TIME_HOURS`, whichever comes first. Pass
-`--max-wall-time-hours 0` to disable the wall-time limit. Pass
-`--save-best-eval-check-answer` to force-save a checkpoint whenever eval
-`check_answer` reaches a new high.
+`--max-wall-time-hours 0` to disable the wall-time limit. By default, training
+force-saves a checkpoint whenever eval `check_answer` reaches a new high; pass
+`--no-save-best-eval-check-answer` to disable this.
 
 ## 6. Resuming after a crash
 

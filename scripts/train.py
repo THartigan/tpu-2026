@@ -228,8 +228,12 @@ def main():
                     help="Pass an existing run id (e.g. bnh9ttlt) to resume.")
     ap.add_argument("--max-wall-time-hours", type=float, default=MAX_WALL_TIME_HOURS,
                     help=f"Training wall-time limit in hours. Default: {MAX_WALL_TIME_HOURS}. Use 0 to disable.")
-    ap.add_argument("--save-best-eval-check-answer", action="store_true",
-                    help="Force-save a checkpoint whenever eval check_answer reaches a new high.")
+    ap.add_argument("--save-best-eval-check-answer", dest="save_best_eval_check_answer",
+                    action="store_true", default=True,
+                    help="Force-save a checkpoint whenever eval check_answer reaches a new high. Enabled by default.")
+    ap.add_argument("--no-save-best-eval-check-answer", dest="save_best_eval_check_answer",
+                    action="store_false",
+                    help="Disable best eval check_answer checkpoint saving.")
     args = ap.parse_args()
     if not args.experiment_name:
         ap.error("--experiment-name is required for training.")
