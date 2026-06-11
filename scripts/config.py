@@ -72,10 +72,9 @@ WARMUP_STEPS = 0.1 * MAX_STEPS
 MAX_GRAD_NORM = 0.1        # tight clipping keeps KL well-behaved
 
 # ====== Checkpointing ======
-# NOTE: Using personal directories to avoid permission issues with shared /home/shared paths.
-# For persistent long-term storage, update these paths to a shared location you have write access to.
-INTERMEDIATE_CKPT_DIR = "/tmp/tpu-intermediate-ckpt/"
-CKPT_DIR = "/tmp/tpu-ckpts/"
+# NOTE: /tmp is volatile. For long runs, point this at persistent storage.
+INTERMEDIATE_CKPT_DIR = "/home/shared/intermediate_ckpt/"
+CKPT_DIR = "/home/shared/ckpts/"
 TENSORBOARD_DIR = "/tmp/tensorboard/grpo"
 SAVE_INTERVAL_STEPS = 500
 MAX_TO_KEEP = 8
