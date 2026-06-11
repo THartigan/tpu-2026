@@ -49,7 +49,7 @@ NUM_GENERATIONS = 12        # G in the GRPO paper — group size for advantage n
 
 # ====== GRPO loss ======
 NUM_ITERATIONS = 1         # mu — PPO-style inner optimisation passes per batch
-BETA = 0.10                # KL penalty coefficient (anchors to reference model)
+BETA = 0.05                # KL penalty coefficient (anchors to reference model)
 EPSILON = 0.2              # PPO-style clip range
 
 # ====== Training ======
@@ -64,12 +64,12 @@ MAX_STEPS = int(os.environ.get("MAX_STEPS", "7423"))
 MAX_WALL_TIME_HOURS = float(os.environ.get("MAX_WALL_TIME_HOURS", "5"))
 
 # ====== Optimiser ======
-LEARNING_RATE = 1e-6
+LEARNING_RATE = 3e-6
 B1 = 0.9
 B2 = 0.99
-WEIGHT_DECAY = 0.1
+WEIGHT_DECAY = 0.05
 WARMUP_STEPS = 0.1 * MAX_STEPS
-MAX_GRAD_NORM = 0.1        # tight clipping keeps KL well-behaved
+MAX_GRAD_NORM = 0.5        # tight clipping keeps KL well-behaved
 
 # ====== Checkpointing ======
 # NOTE: /tmp is volatile. For long runs, point this at persistent storage.
