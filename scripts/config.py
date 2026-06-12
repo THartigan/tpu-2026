@@ -38,7 +38,7 @@ MESH = [MESH_COUNTS, ("fsdp", "tp")]
 
 # ====== Generation during GRPO rollouts ======
 MAX_PROMPT_LENGTH = 256
-TOTAL_GENERATION_STEPS = 768
+TOTAL_GENERATION_STEPS = 1024
 TEMPERATURE = 0.7          # conservative rollout sampling reduces noisy rewards
 TOP_P = 0.95
 TOP_K = 50
