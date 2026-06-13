@@ -1,12 +1,9 @@
-"""GSM8K dataset loading and prompt formatting.
+"""Dataset loading and prompt formatting for GSM8K and MetaMath experiments.
 
-GSM8K is a benchmark of grade-school math word problems. Each example is
-(question, answer) where the gold answer string ends with `#### <number>`.
-
-We wrap each question in a chat template that asks the model to produce
-its reasoning between <reasoning>...</reasoning> and the final numeric
-answer between <answer>...</answer>. The reward functions later check
-both the format and the number itself.
+GSM8K examples are grade-school math word problems whose gold answer string
+ends with `#### <number>`. MetaMathQA contains a mixture of GSM8K-style and
+more advanced math examples; this loader exposes explicit source names so
+experiments can choose the intended data mix reproducibly.
 """
 import csv
 import os
@@ -16,6 +13,8 @@ from pathlib import Path
 import grain
 import kagglehub
 import tensorflow_datasets as tfds
+
+from answer_parsing import extract_dataset_answer
 
 # Special tokens used by the policy and parsed by the reward fns.
 reasoning_start = "<reasoning>"
@@ -37,13 +36,54 @@ TEMPLATE = (
     "<start_of_turn>model\n"
 )
 
+SOURCE_CHOICES = [
+    "tfds",
+    "kaggle",
+    "metamath",
+    "metamath_gsm8k",
+    "metamath_all_numeric",
+    "kaggle+metamath_gsm8k",
+    "kaggle+metamath_all_numeric",
+]
+
+
+class CyclingDataset:
+    """Repeat a finite dataset until a fixed item budget has been yielded."""
+
+    def __init__(self, dataset, length: int):
+        self.dataset = dataset
+        self.length = length
+
+    def __len__(self):
+        return self.length
+
+    def __iter__(self):
+        yielded = 0
+        while yielded < self.length:
+            for item in self.dataset:
+                yield item
+                yielded += 1
+                if yielded >= self.length:
+                    return
+
 
 def extract_hash_answer(text: str) -> str | None:
-    """GSM8K answers look like '...long explanation... #### 42'."""
-    if "####" not in text:
-        return None
-    ans = text.split("####")[1].strip()
-    return ans.split("\n")[0].strip()
+    """Extract a simple numeric answer from GSM8K or MetaMath solutions."""
+    return extract_dataset_answer(
+        text,
+        legacy_gsm8k=os.environ.get("ANSWER_EXTRACTION_PROFILE") == "legacy-gsm8k",
+    )
+
+
+def _as_text(value):
+    return value if isinstance(value, str) else value.decode("utf-8")
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _download_kaggle_dataset(target_dir: str = "./data/gsm8k") -> str:
@@ -55,9 +95,114 @@ def _download_kaggle_dataset(target_dir: str = "./data/gsm8k") -> str:
     return target_dir
 
 
+def _normalise_source(source: str) -> str:
+    return "metamath_gsm8k" if source == "metamath" else source
+
+
+def _uses_metamath(source: str) -> bool:
+    return any(_normalise_source(part).startswith("metamath") for part in source.split("+"))
+
+
+def _record(question: str, raw_answer: str, answer: str, source: str) -> dict:
+    return {
+        "question": question,
+        "raw_answer": raw_answer,
+        "answer": answer,
+        "source": source,
+        "difficulty": raw_answer.count("\n"),
+    }
+
+
+def _load_kaggle_records(data_dir: str, split: str) -> list[dict]:
+    kaggle_dir = _download_kaggle_dataset(data_dir)
+    csv_path = os.path.join(kaggle_dir, f"main_{split}.csv")
+    data = []
+    with open(csv_path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            answer = extract_hash_answer(row["answer"])
+            if answer is None:
+                continue
+            data.append(_record(row["question"], row["answer"], answer, "gsm8k"))
+    return data
+
+
+def _load_metamath_records(level: str) -> list[dict]:
+    from datasets import load_dataset
+
+    if level not in {"gsm8k", "all_numeric"}:
+        raise ValueError(f"Unknown MetaMath level: {level}")
+
+    hf_dataset = load_dataset("meta-math/MetaMathQA", split="train")
+    data = []
+    kept = 0
+    filtered = 0
+    for row in hf_dataset:
+        response = row["response"]
+        if level == "gsm8k" and "####" not in response:
+            filtered += 1
+            continue
+        answer = extract_hash_answer(response)
+        if answer is None:
+            filtered += 1
+            continue
+        kept += 1
+        data.append(_record(row["query"], response, answer, f"metamath_{level}"))
+
+    print(
+        f"MetaMathQA ({level}): kept {kept:,} numeric examples, "
+        f"filtered {filtered:,} examples."
+    )
+    return data
+
+
+def _load_records(data_dir: str, split: str, source: str) -> list[dict]:
+    source = _normalise_source(source)
+    if "+" in source:
+        records = []
+        for part in source.split("+"):
+            records.extend(_load_records(data_dir, split, part))
+        return records
+
+    if source == "kaggle":
+        return _load_kaggle_records(data_dir, split)
+    if source == "metamath_gsm8k":
+        return _load_metamath_records("gsm8k")
+    if source == "metamath_all_numeric":
+        return _load_metamath_records("all_numeric")
+
+    raise ValueError(f"Unknown list-backed source: {source}")
+
+
+def _prepare_records(data: list[dict], split: str) -> grain.MapDataset:
+    curriculum_strategy = os.environ.get("CURRICULUM_STRATEGY", "none")
+    shuffle_train_data = _env_bool("SHUFFLE_TRAIN_DATA", True)
+
+    if curriculum_strategy == "unified_step_count" and split == "train":
+        data.sort(key=lambda x: x["difficulty"])
+    for item in data:
+        item["prompts"] = TEMPLATE.format(
+            system_prompt=SYSTEM_PROMPT,
+            question=_as_text(item["question"]),
+        )
+
+    should_shuffle = (split != "train") or shuffle_train_data
+    ds = grain.MapDataset.source(data)
+    if should_shuffle:
+        ds = ds.shuffle(seed=42)
+    return ds.map(lambda x: {
+        "prompts": x["prompts"],
+        "question": _as_text(x["question"]),
+        "answer": _as_text(x["answer"]),
+        "source": x["source"],
+        "difficulty": x["difficulty"],
+    })
+
+
 def get_dataset(data_dir: str, split: str = "train", source: str = "tfds") -> grain.MapDataset:
     """Return a grain.MapDataset of {prompts, question, answer} dicts."""
     os.makedirs(data_dir, exist_ok=True)
+    source = _normalise_source(source)
 
     if source == "tfds":
         import tensorflow_datasets.text.gsm8k  # noqa: F401  (registers the builder)
@@ -68,41 +213,23 @@ def get_dataset(data_dir: str, split: str = "train", source: str = "tfds") -> gr
             builder_kwargs={"file_format": tfds.core.FileFormat.ARRAY_RECORD},
             download=True,
         )
-    elif source == "kaggle":
-        kaggle_dir = _download_kaggle_dataset(data_dir)
-        csv_path = os.path.join(kaggle_dir, f"main_{split}.csv")
-        data = []
-        with open(csv_path, newline="", encoding="utf-8") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                data.append({"question": row["question"], "answer": row["answer"]})
-    elif source == "metamath":
-        from datasets import load_dataset
-        # MetaMathQA only has a train split
-        hf_dataset = load_dataset("meta-math/MetaMathQA", split="train")
-        data = []
-        for row in hf_dataset:
-            ans = row["response"]
-            if "####" in ans:
-                data.append({"question": row["query"], "answer": ans})
-    else:
-        raise ValueError(f"Unknown source: {source}")
-
-    def _as_text(v):
-        return v if isinstance(v, str) else v.decode("utf-8")
-
-    return (
-        grain.MapDataset.source(data)
-        .shuffle(seed=42)
-        .map(lambda x: {
+        ds = grain.MapDataset.source(data)
+        if split != "train" or _env_bool("SHUFFLE_TRAIN_DATA", True):
+            ds = ds.shuffle(seed=42)
+        return ds.map(lambda x: {
             "prompts": TEMPLATE.format(
                 system_prompt=SYSTEM_PROMPT,
                 question=_as_text(x["question"]),
             ),
             "question": _as_text(x["question"]),
             "answer": extract_hash_answer(_as_text(x["answer"])),
+            "source": "gsm8k",
+            "difficulty": 0,
         })
-    )
+
+    if split != "train" and _uses_metamath(source):
+        source = "kaggle"
+    return _prepare_records(_load_records(data_dir, split, source), split)
 
 
 def build_train_val_test(num_batches: int | None,
@@ -113,7 +240,10 @@ def build_train_val_test(num_batches: int | None,
                          train_dir: str,
                          test_dir: str,
                          num_eval_batches: int | None = None,
-                         source: str = "tfds"):
+                         source: str = "tfds",
+                         repeat_train_data: bool = False,
+                         max_train_steps: int | None = None,
+                         include_test: bool = True):
     """Materialise (train, val, test) datasets with batching applied."""
     full = get_dataset(train_dir, "train", source).batch(train_micro_batch_size)
     if num_batches is not None:
@@ -125,16 +255,26 @@ def build_train_val_test(num_batches: int | None,
         if num_eval_batches >= len(full):
             raise ValueError("num_eval_batches must be smaller than the training set.")
         val_ds = full[:num_eval_batches] if num_eval_batches else None
-        train_ds = full[num_eval_batches:].repeat(num_epochs)
+        train_base = full[num_eval_batches:]
     elif train_fraction == 1.0:
-        train_ds = full.repeat(num_epochs)
+        train_base = full
         val_ds = None
     else:
         cut = int(len(full) * train_fraction)
-        train_ds = full[:cut].repeat(num_epochs)
+        train_base = full[:cut]
         val_ds = full[cut:].repeat(num_epochs)
 
-    test_ds = get_dataset(test_dir, "test", source).batch(train_micro_batch_size)
-    if num_test_batches is not None:
-        test_ds = test_ds[:num_test_batches]
+    if repeat_train_data:
+        if max_train_steps is None:
+            raise ValueError("max_train_steps is required when repeat_train_data is true.")
+        train_ds = CyclingDataset(train_base, max_train_steps)
+    else:
+        train_ds = train_base.repeat(num_epochs)
+
+    test_ds = None
+    if include_test:
+        test_source = "kaggle" if _uses_metamath(source) else source
+        test_ds = get_dataset(test_dir, "test", test_source).batch(train_micro_batch_size)
+        if num_test_batches is not None:
+            test_ds = test_ds[:num_test_batches]
     return train_ds, val_ds, test_ds

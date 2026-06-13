@@ -4,6 +4,7 @@ Reports three numbers:
   * accuracy           — exact numeric match
   * partial_accuracy   — answer within 10% of ground truth
   * format_accuracy    — fraction of completions whose template parses
+  * bootstrap CIs      — uncertainty over evaluated questions
 
 Run as:
     python evaluate.py
@@ -11,6 +12,7 @@ Run as:
 By default this restores the step configured by DEFAULT_EVAL_STEP in config.py.
 """
 import argparse
+from decimal import Decimal
 import json
 import os
 import re
@@ -27,7 +29,6 @@ from config import (
     EXPERIMENT_NAME,
     GENERATION_CONFIGS,
     MAX_PROMPT_LENGTH,
-    NUM_TEST_BATCHES,
     TEST_DATA_DIR,
     TOTAL_GENERATION_STEPS,
     TRAIN_DATA_DIR,
@@ -36,7 +37,9 @@ from config import (
     NUM_BATCHES,
     NUM_EPOCHS,
 )
+from answer_parsing import normalise_number, numeric_ratio
 from data import SYSTEM_PROMPT, TEMPLATE, build_train_val_test
+from eval_stats import bootstrap_confidence_intervals, summarize_per_question
 from model import build_mesh, download_weights, load_base_model, get_lora_model, load_tokenizer
 from rewards import match_format, match_numbers
 
@@ -60,7 +63,7 @@ def generate(question, sampler, eos_tokens, temperature=0.7, top_k=50, top_p=0.9
 
 
 def evaluate(dataset, sampler, eos_tokens, temperature=0.7, top_k=50, top_p=0.95, num_passes=1):
-    corr = partially_corr = corr_format = total = 0
+    per_question = []
 
     for batch in tqdm(dataset):
         answers = batch["answer"]
@@ -73,30 +76,40 @@ def evaluate(dataset, sampler, eos_tokens, temperature=0.7, top_k=50, top_p=0.95
 
         for q, responses, ans in zip(questions, per_q, answers):
             got_corr = got_partial = got_format = False
+            best_extracted = None
             for r in responses:
-                ext = guess.group(1) if (guess := match_numbers.search(r)) is not None else "-1e9"
-                try:
-                    if float(ext.strip()) == float(ans.strip()):
-                        got_corr = True
-                    ratio = float(ext.strip()) / float(ans.strip())
-                    if 0.9 <= ratio <= 1.1:
-                        got_partial = True
-                except Exception:
-                    pass
+                ext = guess.group(1) if (guess := match_numbers.search(r)) is not None else None
+                if best_extracted is None and ext is not None:
+                    best_extracted = ext
+                guess_value = normalise_number(ext)
+                answer_value = normalise_number(ans)
+                if guess_value is not None and answer_value is not None and guess_value == answer_value:
+                    got_corr = True
+                ratio = numeric_ratio(ext, ans)
+                if ratio is not None and Decimal("0.9") <= ratio <= Decimal("1.1"):
+                    got_partial = True
                 if match_format.search(r) is not None:
                     got_format = True
                 if got_corr and got_partial and got_format:
                     break
 
-            corr += int(got_corr)
-            partially_corr += int(got_partial)
-            corr_format += int(got_format)
-            total += 1
+            per_question.append({
+                "index": len(per_question),
+                "answer": str(ans),
+                "extracted": None if best_extracted is None else str(best_extracted),
+                "correct": int(got_corr),
+                "partial_correct": int(got_partial),
+                "format_correct": int(got_format),
+            })
+            summary = summarize_per_question(per_question)
+            total = summary["total"]
             if total % 10 == 0:
-                print(f"===> corr={corr} total={total} acc={corr/total*100:.2f}% "
-                      f"partial={partially_corr/total*100:.2f}% fmt={corr_format/total*100:.2f}%")
+                print(f"===> corr={summary['correct']} total={total} acc={summary['accuracy']:.2f}% "
+                      f"partial={summary['partial_accuracy']:.2f}% fmt={summary['format_accuracy']:.2f}%")
 
-    return corr, total, corr/total*100, partially_corr/total*100, corr_format/total*100
+    summary = summarize_per_question(per_question)
+    summary["per_question"] = per_question
+    return summary
 
 
 def restore_lora(lora_model, ckpt_root: str, step: int | None) -> int:
@@ -129,7 +142,6 @@ def checkpoint_root(ckpt_dir: str | None, experiment_name: str | None) -> str:
 
 def save_eval_result(args, ckpt_root: str, restored_step: int | None, result):
     os.makedirs(EVAL_RESULTS_DIR, exist_ok=True)
-    correct, total, acc, partial_acc, format_acc = result
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     experiment = args.experiment_name or "custom_ckpt"
     step_label = "baseline" if args.baseline else str(restored_step or "unrestored")
@@ -147,16 +159,31 @@ def save_eval_result(args, ckpt_root: str, restored_step: int | None, result):
         "source": args.source,
         "baseline": args.baseline,
         "no_restore": args.no_restore,
-        "correct": correct,
-        "total": total,
-        "accuracy": acc,
-        "partial_accuracy": partial_acc,
-        "format_accuracy": format_acc,
+        "bootstrap_samples": args.bootstrap_samples,
+        "bootstrap_confidence": args.bootstrap_confidence,
+        "bootstrap_seed": args.bootstrap_seed,
+        "correct": result["correct"],
+        "total": result["total"],
+        "accuracy": result["accuracy"],
+        "partial_correct": result["partial_correct"],
+        "partial_accuracy": result["partial_accuracy"],
+        "format_correct": result["format_correct"],
+        "format_accuracy": result["format_accuracy"],
+        "confidence_intervals": result["confidence_intervals"],
+        "per_question": result["per_question"],
     }
     with open(path, "w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, sort_keys=True)
         f.write("\n")
     return path
+
+
+def _metric_with_ci(result: dict, metric: str) -> str:
+    value = result[metric]
+    interval = result["confidence_intervals"][metric]
+    if interval["lower"] is None or interval["upper"] is None:
+        return f"{value:.2f}%"
+    return f"{value:.2f}% [{interval['lower']:.2f}, {interval['upper']:.2f}]"
 
 
 def main():
@@ -174,6 +201,12 @@ def main():
                     help="Evaluate the freshly wrapped LoRA model without restoring checkpoint weights.")
     ap.add_argument("--baseline", action="store_true",
                     help="Evaluate the base model without applying LoRA.")
+    ap.add_argument("--bootstrap-samples", type=int, default=10000,
+                    help="Number of bootstrap resamples for per-question confidence intervals. Use 0 to disable.")
+    ap.add_argument("--bootstrap-confidence", type=float, default=0.95,
+                    help="Bootstrap confidence level. Default: 0.95.")
+    ap.add_argument("--bootstrap-seed", type=int, default=0,
+                    help="Seed for bootstrap resampling. Default: 0.")
     args = ap.parse_args()
     if not args.baseline and not args.experiment_name and not args.ckpt_dir:
         ap.error("--experiment-name is required for checkpoint evaluation unless --ckpt-dir is provided.")
@@ -213,8 +246,18 @@ def main():
         ),
     )
     result = evaluate(test_ds, sampler, eos_tokens, **GENERATION_CONFIGS[args.preset])
-    n, t, acc, pacc, facc = result
-    print(f"\nFINAL: correct={n}/{t}  acc={acc:.2f}%  partial={pacc:.2f}%  format={facc:.2f}%")
+    result["confidence_intervals"] = bootstrap_confidence_intervals(
+        result["per_question"],
+        num_samples=args.bootstrap_samples,
+        confidence=args.bootstrap_confidence,
+        seed=args.bootstrap_seed,
+    )
+    print(
+        f"\nFINAL: correct={result['correct']}/{result['total']}  "
+        f"acc={_metric_with_ci(result, 'accuracy')}  "
+        f"partial={_metric_with_ci(result, 'partial_accuracy')}  "
+        f"format={_metric_with_ci(result, 'format_accuracy')}"
+    )
     result_path = save_eval_result(args, ckpt_root, restored_step, result)
     print(f"Saved eval result to {result_path}")
 

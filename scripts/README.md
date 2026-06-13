@@ -75,11 +75,13 @@ correctness reward in W&B as the real success metric.
 |-------------------|------|
 | `config.py`       | All hyperparameters and paths. Single source of truth. |
 | `data.py`         | GSM8K loading, prompt template, train/val/test split. |
-| `rewards.py`      | The four reward functions and the regexes that parse outputs. |
+| `rewards.py`      | Selectable reward profiles and the regexes that parse outputs. |
 | `model.py`        | Download Gemma weights, build the JAX mesh, wrap with LoRA, load tokenizer. |
 | `evaluate.py`     | Standalone evaluation: accuracy / partial accuracy / format accuracy. |
 | `chat.py`         | Interactive REPL that loads a checkpoint and lets you prompt the trained policy. |
 | `train.py`        | Main entry point: assembles the RL cluster and runs `GRPOLearner.train`. |
+| `run_experiment.py` | Profile launcher that logs exact rerun settings from `experiments.json`. |
+| `experiment_reproduction.md` | How to rerun baseline, improvement, and MetaMath experiment profiles. |
 | `run_tmux.sh`     | Launches `train.py` inside a detached `tmux` session so closing your shell does not kill it. |
 
 Each script imports from `config.py`. Tune one knob, every script sees it.
@@ -114,15 +116,41 @@ python train.py --experiment-name my-run
 # Ctrl-b d to detach
 ```
 
-During training, `NUM_EVAL_BATCHES` examples are held out from the shuffled
-GSM8K train split for lightweight eval. The rest of the train split is used for
-training. By default, training stops after `MAX_STEPS` or after the wall-time
-budget in `MAX_WALL_TIME_HOURS`, whichever comes first. Pass
-`--max-wall-time-hours 0` to disable the wall-time limit. By default, training
-force-saves a checkpoint whenever eval `check_answer` reaches a new high; pass
-`--no-save-best-eval-check-answer` to disable this. The current best checkpoint
-is also copied to `CKPT_DIR/<experiment>/best_check_answer`, outside the normal
-`actor/` retention policy, and is overwritten only by a later better checkpoint.
+For reproducible named experiments, use the profile launcher from the repo root:
+
+```bash
+python scripts/run_experiment.py list
+python scripts/run_experiment.py show improvement-2
+python scripts/run_experiment.py run improvement-2 --experiment-name improvement-2-rerun
+```
+
+To run the full sequential suite, training and then evaluating
+`baseline-5h`, `improvement-1-5h`, `improvement-2-5h`,
+`metamath-gsm8k-level-5h`, and `metamath-gsm8k-math-level-5h`:
+
+```bash
+python scripts/run_all_experiments.py
+```
+
+The suite evaluates both the final/latest checkpoint and the mirrored
+`best_check_answer` checkpoint for each experiment.
+
+The launcher records the profile, source branch/tag, resolved commit, exact
+environment overrides, and command in
+`/home/shared/experiment_launches/<experiment>/launch.json`. See
+`experiment_reproduction.md` for the baseline, improvement-1, improvement-2,
+MetaMath GSM8K-level, and MetaMath GSM8K+MATH-level profiles.
+
+During training, each profile holds out `NUM_EVAL_BATCHES` examples from the
+shuffled training split for lightweight eval. The rest of the train split is
+used for training. Profile runs are wall-time driven: `TRAINING_STEP_CAP` is set to a
+very high safety ceiling and `MAX_WALL_TIME_HOURS=5` is the normal stopping
+condition. Pass `--max-wall-time-hours 0` to disable the wall-time limit. By
+default, training force-saves a checkpoint whenever eval `check_answer` reaches
+a new high; pass `--no-save-best-eval-check-answer` to disable this. The current
+best checkpoint is also copied to `CKPT_DIR/<experiment>/best_check_answer`,
+outside the normal `actor/` retention policy, as a checkpoint root containing
+the best step. It is overwritten only by a later better checkpoint.
 
 ## 6. Resuming after a crash
 
@@ -227,8 +255,12 @@ What to look for:
 | `RANK` (LoRA)         | 64      | More adapter capacity, more KL drift potential.     |
 | `TEMPERATURE`         | 0.7     | Diversity within each group of G rollouts.          |
 | `TOP_P`               | 0.95    | Nucleus sampling cutoff for rollout diversity.      |
-| `NUM_EVAL_BATCHES`    | 50      | During-training eval set size.                      |
-| `EVAL_EVERY_N_STEPS`  | 250     | Frequency of lightweight eval during training.      |
+| `NUM_EVAL_BATCHES`    | profile | During-training eval set size.                      |
+| `EVAL_EVERY_N_STEPS`  | profile | Frequency of lightweight eval during training.      |
+| `REWARD_PROFILE`      | profile | `baseline`, `improvement-1`, or `improvement-2`.    |
+| `WARMUP_STEPS`        | 336     | Integer baseline warmup duration.                   |
+| `LR_SCHEDULE_STEPS`   | 3364    | Original baseline LR decay horizon; not a stop cap. |
+| `TRAINING_STEP_CAP`   | 1e9     | Safety ceiling for trainer API; wall time should stop first. |
 | `MAX_WALL_TIME_HOURS` | 5       | Graceful wall-time cap for training.                |
 
 ## 9. Standalone evaluation
@@ -240,7 +272,17 @@ python evaluate.py --experiment-name my-run --step 0 --preset greedy
 Greedy decoding gives a deterministic number you can compare against. Use
 `--preset standard` for a sampling-based estimate. Standalone evaluation uses
 the full Kaggle GSM8K test split by default; during-training eval is the small
-50-question holdout controlled by `NUM_EVAL_BATCHES`.
+train-split holdout controlled by each profile's `NUM_EVAL_BATCHES`.
+
+`evaluate.py` also reports bootstrap confidence intervals over evaluated
+questions and saves the per-question correctness rows to
+`/home/shared/eval_results`. This adds local post-processing only; it does not
+rerun the model. Defaults are 10,000 bootstrap resamples at 95% confidence:
+
+```bash
+python evaluate.py --experiment-name my-run --step 0 --preset greedy \
+  --bootstrap-samples 10000 --bootstrap-confidence 0.95 --bootstrap-seed 0
+```
 
 ## 10. Interactive chat with a trained checkpoint
 

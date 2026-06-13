@@ -6,6 +6,32 @@ so a change in one place propagates everywhere.
 import os
 import jax
 
+
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_int_or_none(name: str, default: int | None) -> int | None:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    if value.strip().lower() in {"", "none", "null"}:
+        return None
+    return int(value)
+
+
+def _env_float_or_none(name: str, default: float | None) -> float | None:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    if value.strip().lower() in {"", "none", "null"}:
+        return None
+    return float(value)
+
+
 # ====== Model ======
 MODEL_ID = "google/gemma-3-1b-it"
 GEMMA_TOKENIZER_PATH = "gs://gemma-data/tokenizers/tokenizer_gemma3.model"
@@ -16,6 +42,9 @@ TEST_DATA_DIR = "./data/test"
 TRAIN_FRACTION = 0.9
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "kaggle")  # "tfds" or "kaggle"
 EVAL_DATA_SOURCE = os.environ.get("EVAL_DATA_SOURCE", "kaggle")
+REWARD_PROFILE = os.environ.get("REWARD_PROFILE", "improvement-2")
+CURRICULUM_STRATEGY = os.environ.get("CURRICULUM_STRATEGY", "none")
+SHUFFLE_TRAIN_DATA = _env_bool("SHUFFLE_TRAIN_DATA", True)
 
 # ====== LoRA (parameter-efficient finetuning) ======
 # Only the LoRA adapters are trained; the base model is frozen and shared with
@@ -37,46 +66,47 @@ else:
 MESH = [MESH_COUNTS, ("fsdp", "tp")]
 
 # ====== Generation during GRPO rollouts ======
-MAX_PROMPT_LENGTH = 256
-TOTAL_GENERATION_STEPS = 768
-TEMPERATURE = 0.7          # conservative rollout sampling reduces noisy rewards
-TOP_P = 0.95
-TOP_K = 50
-NUM_GENERATIONS = 12        # G in the GRPO paper — group size for advantage norm
+MAX_PROMPT_LENGTH = int(os.environ.get("MAX_PROMPT_LENGTH", "256"))
+TOTAL_GENERATION_STEPS = int(os.environ.get("TOTAL_GENERATION_STEPS", "768"))
+TEMPERATURE = float(os.environ.get("TEMPERATURE", "0.7"))  # conservative rollout sampling reduces noisy rewards
+TOP_P = float(os.environ.get("TOP_P", "0.95"))
+TOP_K = int(os.environ.get("TOP_K", "50"))
+NUM_GENERATIONS = int(os.environ.get("NUM_GENERATIONS", "12"))  # G in the GRPO paper: group size
 
 # ====== GRPO loss ======
-NUM_ITERATIONS = 1         # mu — PPO-style inner optimisation passes per batch
-BETA = 0.10                # KL penalty coefficient (anchors to reference model)
-EPSILON = 0.2              # PPO-style clip range
+NUM_ITERATIONS = int(os.environ.get("NUM_ITERATIONS", "1"))  # mu: PPO-style inner optimisation passes
+BETA = float(os.environ.get("BETA", "0.10"))  # KL penalty coefficient (anchors to reference model)
+EPSILON = float(os.environ.get("EPSILON", "0.2"))  # PPO-style clip range
 
 # ====== Training ======
-TRAIN_MICRO_BATCH_SIZE = 1
-NUM_BATCHES = None
-NUM_EVAL_BATCHES = 50
-NUM_TEST_BATCHES = 64
-EVAL_EVERY_N_STEPS = 250
-NUM_EPOCHS = 1
+TRAIN_MICRO_BATCH_SIZE = int(os.environ.get("TRAIN_MICRO_BATCH_SIZE", "1"))
+NUM_BATCHES = _env_int_or_none("NUM_BATCHES", None)
+NUM_EVAL_BATCHES = _env_int_or_none("NUM_EVAL_BATCHES", 50)
+EVAL_EVERY_N_STEPS = int(os.environ.get("EVAL_EVERY_N_STEPS", "250"))
+NUM_EPOCHS = int(os.environ.get("NUM_EPOCHS", "1"))
+REPEAT_TRAIN_DATA = _env_bool("REPEAT_TRAIN_DATA", False)
 FULL_EPOCH_STEPS = None
-MAX_STEPS = int(os.environ.get("MAX_STEPS", "20000"))
+TRAINING_STEP_CAP = int(os.environ.get("TRAINING_STEP_CAP", "1000000000"))
+LR_SCHEDULE_STEPS = int(os.environ.get("LR_SCHEDULE_STEPS", "20000"))
 MAX_WALL_TIME_HOURS = float(os.environ.get("MAX_WALL_TIME_HOURS", "5"))
 
 # ====== Optimiser ======
-LEARNING_RATE = 1e-6
-B1 = 0.9
-B2 = 0.99
-WEIGHT_DECAY = 0.1
-WARMUP_STEPS = 0.1 * MAX_STEPS
-MAX_GRAD_NORM = 0.1        # tight clipping keeps KL well-behaved
+B1 = float(os.environ.get("B1", "0.9"))
+B2 = float(os.environ.get("B2", "0.99"))
+LEARNING_RATE = float(os.environ.get("LEARNING_RATE", "1e-6"))
+WEIGHT_DECAY = float(os.environ.get("WEIGHT_DECAY", "0.1"))
+WARMUP_STEPS = int(float(os.environ.get("WARMUP_STEPS", str(0.1 * LR_SCHEDULE_STEPS))))
+MAX_GRAD_NORM = _env_float_or_none("MAX_GRAD_NORM", 0.1)  # tight clipping keeps KL well-behaved
 
 # ====== Checkpointing ======
 # NOTE: /tmp is volatile. For long runs, point this at persistent storage.
 INTERMEDIATE_CKPT_DIR = "/home/shared/intermediate_ckpt/"
 CKPT_DIR = "/home/shared/ckpts/"
 TENSORBOARD_DIR = "/home/shared/tensorboard/grpo"
-SAVE_INTERVAL_STEPS = 500
-MAX_TO_KEEP = 8
+SAVE_INTERVAL_STEPS = int(os.environ.get("SAVE_INTERVAL_STEPS", "500"))
+MAX_TO_KEEP = int(os.environ.get("MAX_TO_KEEP", "8"))
 EXPERIMENT_NAME = os.environ.get("EXPERIMENT_NAME", None)
-DEFAULT_EVAL_STEP = int(os.environ.get("DEFAULT_EVAL_STEP", str(MAX_STEPS)))
+DEFAULT_EVAL_STEP = int(os.environ.get("DEFAULT_EVAL_STEP", str(LR_SCHEDULE_STEPS)))
 
 # ====== Inference presets ======
 GENERATION_CONFIGS = {

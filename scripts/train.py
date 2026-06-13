@@ -36,9 +36,9 @@ from config import (
     EVAL_EVERY_N_STEPS,
     EXPERIMENT_NAME,
     LEARNING_RATE,
+    LR_SCHEDULE_STEPS,
     MAX_GRAD_NORM,
     MAX_PROMPT_LENGTH,
-    MAX_STEPS,
     MAX_WALL_TIME_HOURS,
     MAX_TO_KEEP,
     NUM_BATCHES,
@@ -46,13 +46,15 @@ from config import (
     NUM_EPOCHS,
     NUM_GENERATIONS,
     NUM_ITERATIONS,
-    NUM_TEST_BATCHES,
+    REPEAT_TRAIN_DATA,
+    REWARD_PROFILE,
     SAVE_INTERVAL_STEPS,
     TEMPERATURE,
     TENSORBOARD_DIR,
     TEST_DATA_DIR,
     TOP_K, TOP_P,
     TOTAL_GENERATION_STEPS,
+    TRAINING_STEP_CAP,
     TRAIN_DATA_DIR,
     TRAIN_FRACTION,
     TRAIN_MICRO_BATCH_SIZE,
@@ -62,7 +64,7 @@ from config import (
     WARMUP_STEPS,
     WEIGHT_DECAY,
 )
-from data import build_train_val_test
+from data import SOURCE_CHOICES, build_train_val_test
 from model import build_mesh, download_weights, load_base_model, get_lora_model, load_tokenizer
 from rewards import REWARD_FNS, latest_eval_check_answer
 
@@ -110,11 +112,12 @@ class BestEvalCheckAnswerCheckpointHook:
     def on_eval_step_start(self, train_ctx):
         pass
 
-    def _copy_best_checkpoint(self, step_dir: str, best_dir: str):
+    def _copy_best_checkpoint(self, step_dir: str, best_dir: str, step: int):
         tmp_dir = f"{best_dir}.tmp"
         if os.path.exists(tmp_dir):
             shutil.rmtree(tmp_dir)
-        shutil.copytree(step_dir, tmp_dir, symlinks=True)
+        os.makedirs(tmp_dir, exist_ok=True)
+        shutil.copytree(step_dir, os.path.join(tmp_dir, str(step)), symlinks=True)
         if os.path.exists(best_dir):
             shutil.rmtree(best_dir)
         os.rename(tmp_dir, best_dir)
@@ -151,7 +154,7 @@ class BestEvalCheckAnswerCheckpointHook:
             return
 
         best_dir = os.path.join(os.path.dirname(actor_dir), "best_check_answer")
-        self._copy_best_checkpoint(step_dir, best_dir)
+        self._copy_best_checkpoint(step_dir, best_dir, step)
         print(
             f"New best eval check_answer={score:.4f} at step {step}; "
             f"checkpoint saved={saved}; best copy updated at {best_dir}."
@@ -199,7 +202,7 @@ def build_optimizer():
         init_value=0.0,
         peak_value=LEARNING_RATE,
         warmup_steps=WARMUP_STEPS,
-        decay_steps=MAX_STEPS,
+        decay_steps=LR_SCHEDULE_STEPS,
         end_value=0.0,
     )
     opt = optax.adamw(learning_rate=schedule, b1=B1, b2=B2, weight_decay=WEIGHT_DECAY)
@@ -220,7 +223,7 @@ def build_cluster_config(mesh, optimizer, eos_tokens, ckpt_dir: str, tensorboard
         training_config=rl_cluster_lib.RLTrainingConfig(
             actor_optimizer=optimizer,
             eval_every_n_steps=EVAL_EVERY_N_STEPS,
-            max_steps=MAX_STEPS,
+            max_steps=TRAINING_STEP_CAP,
             mini_batch_size=TRAIN_MICRO_BATCH_SIZE,
             train_micro_batch_size=TRAIN_MICRO_BATCH_SIZE,
             metrics_logging_options=metrics_logger.MetricsLoggerOptions(
@@ -243,7 +246,7 @@ def build_cluster_config(mesh, optimizer, eos_tokens, ckpt_dir: str, tensorboard
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--source", default=DATA_SOURCE, choices=["tfds", "kaggle", "metamath"])
+    ap.add_argument("--source", default=DATA_SOURCE, choices=SOURCE_CHOICES)
     ap.add_argument("--experiment-name", default=EXPERIMENT_NAME,
                     help="Optional run name. Stores checkpoints under CKPT_DIR/<name>/ and TensorBoard under TENSORBOARD_DIR/<name>/")
     ap.add_argument("--wandb-run-id", default=WANDB_RUN_ID,
@@ -275,9 +278,11 @@ def main():
     tokenizer, eos_tokens = load_tokenizer(eos_tokens)
 
     train_ds, val_ds, _ = build_train_val_test(
-        NUM_BATCHES, NUM_TEST_BATCHES, TRAIN_MICRO_BATCH_SIZE, TRAIN_FRACTION,
+        NUM_BATCHES, None, TRAIN_MICRO_BATCH_SIZE, TRAIN_FRACTION,
         NUM_EPOCHS, TRAIN_DATA_DIR, TEST_DATA_DIR,
         num_eval_batches=NUM_EVAL_BATCHES, source=args.source,
+        repeat_train_data=REPEAT_TRAIN_DATA, max_train_steps=TRAINING_STEP_CAP,
+        include_test=False,
     )
     print(f"Datasets: train={len(train_ds)} val={len(val_ds) if val_ds else 0}")
     max_wall_time_hours = None if args.max_wall_time_hours <= 0 else args.max_wall_time_hours
@@ -301,7 +306,8 @@ def main():
 
     print(
         f"Starting GRPO training. CKPT_DIR={ckpt_dir}  "
-        f"TENSORBOARD_DIR={tensorboard_dir}  MAX_STEPS={MAX_STEPS}  "
+        f"TENSORBOARD_DIR={tensorboard_dir}  TRAINING_STEP_CAP={TRAINING_STEP_CAP}  "
+        f"LR_SCHEDULE_STEPS={LR_SCHEDULE_STEPS}  REWARD_PROFILE={REWARD_PROFILE}  "
         f"MAX_WALL_TIME_HOURS={max_wall_time_hours}"
     )
     trainer.train(train_ds, val_ds)

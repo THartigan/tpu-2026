@@ -19,11 +19,14 @@ this within the group of G rollouts to compute the advantage. This is the
 "group-relative" part of GRPO: no value network is learned; advantages come
 from comparing siblings drawn from the same prompt.
 """
-from decimal import Decimal, InvalidOperation
-from fractions import Fraction
+from decimal import Decimal
+import os
 import re
 
-from config import TOTAL_GENERATION_STEPS
+from answer_parsing import NUMBER_PATTERN as number_pattern
+from answer_parsing import normalise_number as _normalise_number
+from answer_parsing import numeric_ratio as _numeric_ratio
+from config import REWARD_PROFILE, TOTAL_GENERATION_STEPS
 from data import reasoning_start, reasoning_end, solution_start, solution_end
 
 FORMAT_REWARD_FULL_STEPS = 500
@@ -59,12 +62,13 @@ match_format = re.compile(
     flags=re.MULTILINE | re.DOTALL,
 )
 
-number_pattern = re.compile(
-    r"-?\s*\$?\s*(?:\d+\s*/\s*\d+|\d[\d,]*(?:\.\d+)?)\s*%?"
-)
-
 match_numbers = re.compile(
     rf"{solution_start}.*?({number_pattern.pattern})",
+    flags=re.MULTILINE | re.DOTALL,
+)
+
+legacy_match_numbers = re.compile(
+    rf"{solution_start}.*?([\d\.]{{1,}})",
     flags=re.MULTILINE | re.DOTALL,
 )
 
@@ -98,44 +102,26 @@ def _format_reward_scale(kwargs):
     return 1.0 - decay_progress * (1.0 - FORMAT_REWARD_FINAL_SCALE)
 
 
-def _extract_number(text):
-    if text is None:
-        return None
-    match = number_pattern.search(str(text))
-    return match.group(0) if match is not None else None
-
-
-def _normalise_number(text):
-    number = _extract_number(text)
-    if number is None:
-        return None
-    s = number.strip().replace(" ", "").replace("$", "").replace(",", "")
-    is_percent = s.endswith("%")
-    if is_percent:
-        s = s[:-1]
-    try:
-        if "/" in s:
-            value = Decimal(Fraction(s).numerator) / Decimal(Fraction(s).denominator)
-        else:
-            value = Decimal(s)
-    except (InvalidOperation, ValueError, ZeroDivisionError):
-        return None
-    return value / Decimal(100) if is_percent else value
-
-
-def _numeric_ratio(guess, true):
-    guess_value = _normalise_number(guess)
-    true_value = _normalise_number(true)
-    if guess_value is None or true_value is None or true_value == 0:
-        return None
-    return abs(guess_value / true_value)
-
-
 def _estimated_tokens(text):
     stripped = str(text).strip()
     if not stripped:
         return 0
     return max(len(stripped.split()), len(stripped) // 4)
+
+
+def _record_eval_check_answer(scores, kwargs):
+    global _LATEST_EVAL_CHECK_ANSWER_VALUES
+    if str(kwargs.get("mode", "")).lower().endswith("eval") and scores:
+        trajectory_ids = kwargs.get("trajectory_ids") or []
+        eval_rows = []
+        for trajectory_id in trajectory_ids:
+            try:
+                eval_rows.append(int(str(trajectory_id).split("_", 1)[0]))
+            except (TypeError, ValueError):
+                pass
+        if eval_rows and min(eval_rows) == 0:
+            _LATEST_EVAL_CHECK_ANSWER_VALUES = []
+        _LATEST_EVAL_CHECK_ANSWER_VALUES.extend(scores)
 
 
 def match_format_exactly(prompts, completions, **kwargs):
@@ -159,6 +145,42 @@ def match_format_approximately(prompts, completions, **kwargs):
         s += 0.5 if response.count(solution_start) == 1 else 0.0
         s += 0.5 if response.count(solution_end) == 1 else 0.0
         scores.append(s * scale)
+    return scores
+
+
+def match_format_exactly_unscaled(prompts, completions, **kwargs):
+    """Historical +3 exact-format reward with no decay."""
+    return [
+        0 if match_format.search(r) is None else 3.0
+        for r in completions
+    ]
+
+
+def match_format_approximately_baseline(prompts, completions, **kwargs):
+    """Original baseline format shaping, including negative tag penalties."""
+    scores = []
+    for response in completions:
+        s = 0.0
+        s += 0.5 if response.count(reasoning_start) == 1 else -0.5
+        s += 0.5 if response.find(reasoning_start) == 0 else -0.5
+        s += 0.5 if response.count(reasoning_end) == 1 else -0.5
+        s += 0.5 if response.count(solution_start) == 1 else -0.5
+        s += 0.5 if response.count(solution_end) == 1 else -0.5
+        scores.append(s)
+    return scores
+
+
+def match_format_approximately_nonnegative(prompts, completions, **kwargs):
+    """Improvement-1 format shaping: reward valid tags without penalties."""
+    scores = []
+    for response in completions:
+        s = 0.0
+        s += 0.5 if response.count(reasoning_start) == 1 else 0.0
+        s += 0.5 if response.find(reasoning_start) == 0 else 0.0
+        s += 0.5 if response.count(reasoning_end) == 1 else 0.0
+        s += 0.5 if response.count(solution_start) == 1 else 0.0
+        s += 0.5 if response.count(solution_end) == 1 else 0.0
+        scores.append(s)
     return scores
 
 
@@ -196,7 +218,6 @@ def discourage_long_outputs(prompts, completions, **kwargs):
 
 def check_answer(prompts, completions, answer, **kwargs):
     """Reward correctness of the bracketed answer with partial credit."""
-    global _LATEST_EVAL_CHECK_ANSWER_VALUES
     extracted = [
         guess.group(1) if r is not None and (guess := match_format.search(r)) is not None else None
         for r in completions
@@ -226,17 +247,39 @@ def check_answer(prompts, completions, answer, **kwargs):
                 scores.append(ANSWER_WITHIN_20_PERCENT_REWARD)
             else:
                 scores.append(ANSWER_WRONG_NUMERIC_PENALTY)
-    if str(kwargs.get("mode", "")).lower().endswith("eval") and scores:
-        trajectory_ids = kwargs.get("trajectory_ids") or []
-        eval_rows = []
-        for trajectory_id in trajectory_ids:
+    _record_eval_check_answer(scores, kwargs)
+    return scores
+
+
+def check_answer_legacy(prompts, completions, answer, **kwargs):
+    """Historical answer reward used by baseline and improvement-1."""
+    extracted = [
+        guess.group(1) if r is not None and (guess := match_format.search(r)) is not None else None
+        for r in completions
+    ]
+    assert len(extracted) == len(answer)
+
+    scores = []
+    for guess, true in zip(extracted, answer):
+        if guess is None:
+            scores.append(0)
+            continue
+        if guess == true:
+            scores.append(3.0)
+        elif guess.strip() == true.strip():
+            scores.append(1.5)
+        else:
             try:
-                eval_rows.append(int(str(trajectory_id).split("_", 1)[0]))
-            except (TypeError, ValueError):
-                pass
-        if eval_rows and min(eval_rows) == 0:
-            _LATEST_EVAL_CHECK_ANSWER_VALUES = []
-        _LATEST_EVAL_CHECK_ANSWER_VALUES.extend(scores)
+                ratio = float(guess) / float(true)
+                if 0.9 <= ratio <= 1.1:
+                    scores.append(0.5)
+                elif 0.8 <= ratio <= 1.2:
+                    scores.append(0.25)
+                else:
+                    scores.append(-1.0)
+            except Exception:
+                scores.append(-0.5)
+    _record_eval_check_answer(scores, kwargs)
     return scores
 
 
@@ -277,11 +320,81 @@ def check_numbers(prompts, completions, answer, **kwargs):
     return scores
 
 
-REWARD_FNS = [
-    match_format_exactly,
-    match_format_approximately,
-    discourage_short_outputs,
-    discourage_long_outputs,
-    check_answer,
-    check_numbers,
-]
+def check_numbers_legacy(prompts, completions, answer, **kwargs):
+    """Historical numeric fallback used by baseline and improvement-1."""
+    question = kwargs["question"]
+    extracted = [
+        guess.group(1) if (guess := legacy_match_numbers.search(r)) is not None else None
+        for r in completions
+    ]
+
+    print("START ============================")
+    print(f"Question:\t{question[0]}")
+    print(f"Answer:\t{answer[0]}")
+    print(f"Response:\t{completions[0]}")
+    print(f"Extracted:\t{extracted[0]}")
+    print("END ==============================")
+
+    scores = []
+    for guess, true in zip(extracted, answer):
+        if guess is None:
+            scores.append(0)
+            continue
+        try:
+            scores.append(1.5 if float(guess.strip()) == float(true.strip()) else 0.0)
+        except Exception:
+            scores.append(0)
+    return scores
+
+
+REWARD_PROFILES = {
+    "baseline": [
+        match_format_exactly_unscaled,
+        match_format_approximately_baseline,
+        check_answer_legacy,
+        check_numbers_legacy,
+    ],
+    "improvement-1": [
+        match_format_exactly_unscaled,
+        match_format_approximately_nonnegative,
+        discourage_short_outputs,
+        check_answer_legacy,
+        check_numbers_legacy,
+    ],
+    "improvement_1": [
+        match_format_exactly_unscaled,
+        match_format_approximately_nonnegative,
+        discourage_short_outputs,
+        check_answer_legacy,
+        check_numbers_legacy,
+    ],
+    "improvement-2": [
+        match_format_exactly,
+        match_format_approximately,
+        discourage_short_outputs,
+        discourage_long_outputs,
+        check_answer,
+        check_numbers,
+    ],
+    "improvement_2": [
+        match_format_exactly,
+        match_format_approximately,
+        discourage_short_outputs,
+        discourage_long_outputs,
+        check_answer,
+        check_numbers,
+    ],
+}
+
+
+def reward_fns_for_profile(profile: str):
+    key = str(profile).strip().lower()
+    if key not in REWARD_PROFILES:
+        raise ValueError(
+            f"Unknown REWARD_PROFILE={profile!r}. "
+            f"Choose one of: {', '.join(sorted(REWARD_PROFILES))}."
+        )
+    return REWARD_PROFILES[key]
+
+
+REWARD_FNS = reward_fns_for_profile(os.environ.get("REWARD_PROFILE", REWARD_PROFILE))
