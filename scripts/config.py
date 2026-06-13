@@ -17,6 +17,11 @@ TRAIN_FRACTION = 0.9
 DATA_SOURCE = os.environ.get("DATA_SOURCE", "kaggle")  # "tfds" or "kaggle"
 EVAL_DATA_SOURCE = os.environ.get("EVAL_DATA_SOURCE", "kaggle")
 
+# ====== Curriculum Learning ======
+CURRICULUM_STRATEGY = os.environ.get("CURRICULUM_STRATEGY", "unified_step_count")
+# unified_step_count: Sort training data globally by answer step count (easy→hard)
+SHUFFLE_TRAIN_DATA = False  # Set to False to stream sequentially from easy to hard; set to True to randomize
+
 # ====== LoRA (parameter-efficient finetuning) ======
 # Only the LoRA adapters are trained; the base model is frozen and shared with
 # the reference model. Smaller rank => fewer trainable params, smaller KL drift.

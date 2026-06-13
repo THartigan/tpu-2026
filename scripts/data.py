@@ -7,6 +7,10 @@ We wrap each question in a chat template that asks the model to produce
 its reasoning between <reasoning>...</reasoning> and the final numeric
 answer between <answer>...</answer>. The reward functions later check
 both the format and the number itself.
+
+Curriculum Learning: When CURRICULUM_STRATEGY="unified_step_count", data is
+globally sorted by answer step count (computed from newlines in reference answer),
+allowing progressive training from easy (1-2 steps) to hard (8+ steps) problems.
 """
 import csv
 import os
@@ -16,6 +20,8 @@ from pathlib import Path
 import grain
 import kagglehub
 import tensorflow_datasets as tfds
+
+import config
 
 # Special tokens used by the policy and parsed by the reward fns.
 reasoning_start = "<reasoning>"
@@ -56,8 +62,17 @@ def _download_kaggle_dataset(target_dir: str = "./data/gsm8k") -> str:
 
 
 def get_dataset(data_dir: str, split: str = "train", source: str = "tfds") -> grain.MapDataset:
-    """Return a grain.MapDataset of {prompts, question, answer} dicts."""
+    """Return a grain.MapDataset of {prompts, question, answer, source, difficulty} dicts.
+    
+    If CURRICULUM_STRATEGY == "unified_step_count", the data is globally sorted by difficulty
+    (computed from step count in reference answer), enabling progressive easy→hard training.
+    Note: Curriculum sorting only applies to kaggle and metamath sources (pre-loaded lists).
+    TFDS sources use lazy loading and cannot be globally sorted.
+    """
     os.makedirs(data_dir, exist_ok=True)
+
+    def _as_text(v):
+        return v if isinstance(v, str) else v.decode("utf-8")
 
     if source == "tfds":
         import tensorflow_datasets.text.gsm8k  # noqa: F401  (registers the builder)
@@ -68,6 +83,23 @@ def get_dataset(data_dir: str, split: str = "train", source: str = "tfds") -> gr
             builder_kwargs={"file_format": tfds.core.FileFormat.ARRAY_RECORD},
             download=True,
         )
+        # TFDS returns lazy-loaded data. Build grain dataset directly without sorting.
+        ds = grain.MapDataset.source(data)
+        if config.SHUFFLE_TRAIN_DATA:
+            ds = ds.shuffle(seed=42)
+        
+        # Add source and difficulty metadata for TFDS
+        return ds.map(lambda x: {
+            "prompts": TEMPLATE.format(
+                system_prompt=SYSTEM_PROMPT,
+                question=_as_text(x["question"]),
+            ),
+            "question": _as_text(x["question"]),
+            "answer": _as_text(x["answer"]),
+            "source": "gsm8k",
+            "difficulty": 0,  # TFDS does not support curriculum (not pre-sorted)
+        })
+    
     elif source == "kaggle":
         kaggle_dir = _download_kaggle_dataset(data_dir)
         csv_path = os.path.join(kaggle_dir, f"main_{split}.csv")
@@ -75,7 +107,12 @@ def get_dataset(data_dir: str, split: str = "train", source: str = "tfds") -> gr
         with open(csv_path, newline="", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                data.append({"question": row["question"], "answer": row["answer"]})
+                data.append({
+                    "question": row["question"],
+                    "answer": row["answer"],
+                    "source": "gsm8k"
+                })
+    
     elif source == "metamath":
         from datasets import load_dataset
         # MetaMathQA only has a train split
@@ -84,25 +121,53 @@ def get_dataset(data_dir: str, split: str = "train", source: str = "tfds") -> gr
         for row in hf_dataset:
             ans = row["response"]
             if "####" in ans:
-                data.append({"question": row["query"], "answer": ans})
+                data.append({
+                    "question": row["query"],
+                    "answer": ans,
+                    "source": "metamath"
+                })
+    
     else:
         raise ValueError(f"Unknown source: {source}")
 
-    def _as_text(v):
-        return v if isinstance(v, str) else v.decode("utf-8")
+    # For kaggle/metamath: calculate difficulty and apply curriculum sorting if enabled
+    if config.CURRICULUM_STRATEGY == "unified_step_count" and split == "train":
+        for item in data:
+            # Count newlines in raw answer as proxy for number of steps/reasoning steps
+            raw_answer = _as_text(item["answer"])
+            step_count = raw_answer.count("\n")
+            item["difficulty"] = step_count
+        
+        # Global sort by difficulty (easy → hard)
+        data.sort(key=lambda x: x["difficulty"])
+    else:
+        # For non-curriculum or non-train splits, set difficulty to 0 (no effect)
+        for item in data:
+            item["difficulty"] = 0
 
-    return (
-        grain.MapDataset.source(data)
-        .shuffle(seed=42)
-        .map(lambda x: {
-            "prompts": TEMPLATE.format(
-                system_prompt=SYSTEM_PROMPT,
-                question=_as_text(x["question"]),
-            ),
-            "question": _as_text(x["question"]),
-            "answer": extract_hash_answer(_as_text(x["answer"])),
-        })
-    )
+    # Add prompts to each dict before creating MapDataset
+    # This ensures all fields are populated before Grain wraps the data
+    for item in data:
+        item["prompts"] = TEMPLATE.format(
+            system_prompt=SYSTEM_PROMPT,
+            question=_as_text(item["question"]),
+        )
+
+    # Build grain dataset with optional shuffling based on config
+    ds = grain.MapDataset.source(data)
+    # For train splits with curriculum disabled, or for eval/test splits, use unconditional shuffle
+    # to preserve original behavior. Train splits with curriculum enabled have already been sorted.
+    should_shuffle = (split != "train") or config.SHUFFLE_TRAIN_DATA
+    if should_shuffle:
+        ds = ds.shuffle(seed=42)
+
+    return ds.map(lambda x: {
+        "prompts": x["prompts"],
+        "question": _as_text(x["question"]),
+        "answer": _as_text(x["answer"]),
+        "source": x["source"],
+        "difficulty": x["difficulty"],
+    })
 
 
 def build_train_val_test(num_batches: int | None,
