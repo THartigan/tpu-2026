@@ -109,8 +109,8 @@ python scripts/evaluate.py \
 | `baseline` | `Baseline` | `repeat_gsm8k` | `baseline` | Kaggle GSM8K |
 | `improvement-1` | `Improvement-1` | `repeat_gsm8k` | `improvement-1` | Kaggle GSM8K |
 | `improvement-2` | `improvement-2` | `repeat_gsm8k` | `improvement-2` | Kaggle GSM8K |
-| `metamath-gsm8k-level` | `origin/data-augmentation` | `expanded_dataset` | `improvement-2` | Kaggle GSM8K + MetaMathQA GSM8K-style rows |
-| `metamath-gsm8k-math-level` | `origin/more-metamath-data` | `expanded_dataset` | `improvement-2` | Kaggle GSM8K + all numeric MetaMathQA rows |
+| `metamath-gsm8k-level` | `origin/data-augmentation` | `expanded_dataset` | `improvement-1` | Kaggle GSM8K + MetaMathQA GSM8K-style rows |
+| `metamath-gsm8k-math-level` | `origin/more-metamath-data` | `expanded_dataset` | `improvement-1` | Kaggle GSM8K + all numeric MetaMathQA rows |
 
 ## Reward Profiles
 
@@ -128,14 +128,16 @@ best-checkpoint mirror.
 - legacy `check_answer` rewards: exact `3.0`, stripped `1.5`, close numeric partial credit
 - legacy `check_numbers` reward: exact numeric fallback `1.5`
 
-`improvement-1` reproduces the first reward changes:
+`improvement-1` uses the improvement-2 reward design without tapering the
+format rewards:
 
 - exact format reward
 - non-negative approximate format shaping
-- short-output penalty
-- legacy `check_answer` and `check_numbers` values
+- short-output and long-output penalties
+- improved numeric parsing for commas, fractions, currency, and percentages
+- stronger correctness rewards: `check_answer` exact `5.0`, `check_numbers` exact `2.0`
 
-`improvement-2` is the current reward design:
+`improvement-2` adds format reward tapering to the improvement-1 profile:
 
 - format rewards linearly decay from full strength after step 500 to 25% by step 1000
 - non-negative approximate format shaping

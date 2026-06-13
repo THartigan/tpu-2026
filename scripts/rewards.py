@@ -252,7 +252,7 @@ def check_answer(prompts, completions, answer, **kwargs):
 
 
 def check_answer_legacy(prompts, completions, answer, **kwargs):
-    """Historical answer reward used by baseline and improvement-1."""
+    """Historical answer reward used by the baseline reward profile."""
     extracted = [
         guess.group(1) if r is not None and (guess := match_format.search(r)) is not None else None
         for r in completions
@@ -321,7 +321,7 @@ def check_numbers(prompts, completions, answer, **kwargs):
 
 
 def check_numbers_legacy(prompts, completions, answer, **kwargs):
-    """Historical numeric fallback used by baseline and improvement-1."""
+    """Historical numeric fallback used by the baseline reward profile."""
     question = kwargs["question"]
     extracted = [
         guess.group(1) if (guess := legacy_match_numbers.search(r)) is not None else None
@@ -358,15 +358,17 @@ REWARD_PROFILES = {
         match_format_exactly_unscaled,
         match_format_approximately_nonnegative,
         discourage_short_outputs,
-        check_answer_legacy,
-        check_numbers_legacy,
+        discourage_long_outputs,
+        check_answer,
+        check_numbers,
     ],
     "improvement_1": [
         match_format_exactly_unscaled,
         match_format_approximately_nonnegative,
         discourage_short_outputs,
-        check_answer_legacy,
-        check_numbers_legacy,
+        discourage_long_outputs,
+        check_answer,
+        check_numbers,
     ],
     "improvement-2": [
         match_format_exactly,
