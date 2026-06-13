@@ -10,6 +10,7 @@ both the format and the number itself.
 """
 import csv
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -39,11 +40,40 @@ TEMPLATE = (
 
 
 def extract_hash_answer(text: str) -> str | None:
-    """GSM8K answers look like '...long explanation... #### 42'."""
-    if "####" not in text:
+    """Extract the final answer from GSM8K / MetaMath style solutions."""
+
+    text = text.strip()
+
+    # GSM8K
+    if "####" in text:
+        ans = text.split("####")[-1].strip()
+        ans = ans.splitlines()[0].strip().rstrip(" .")
+        return ans
+
+    # MetaMath
+    m = re.search(r"The answer is:\s*(.+)", text, flags=re.IGNORECASE)
+    if not m:
         return None
-    ans = text.split("####")[1].strip()
-    return ans.split("\n")[0].strip()
+
+    ans = m.group(1).splitlines()[0].strip().rstrip(" .")
+
+    # Optional numeric \boxed{...}
+    boxed = re.fullmatch(r"\\boxed\{([^}]*)\}", ans)
+    if boxed:
+        ans = boxed.group(1).strip()
+
+    # Accept only simple numeric forms
+    numeric_pattern = (
+        r"^[+-]?"
+        r"(?:\d[\d,]*(?:\.\d+)?|\.\d+)"
+        r"(?:/\d[\d,]*(?:\.\d+)?)?"
+        r"%?$"
+    )
+
+    if re.fullmatch(numeric_pattern, ans):
+        return ans
+
+    return None
 
 
 def _download_kaggle_dataset(target_dir: str = "./data/gsm8k") -> str:
@@ -78,13 +108,34 @@ def get_dataset(data_dir: str, split: str = "train", source: str = "tfds") -> gr
                 data.append({"question": row["question"], "answer": row["answer"]})
     elif source == "metamath":
         from datasets import load_dataset
+
         # MetaMathQA only has a train split
         hf_dataset = load_dataset("meta-math/MetaMathQA", split="train")
+
         data = []
+
+        kept = 0
+        filtered = 0
+
         for row in hf_dataset:
-            ans = row["response"]
-            if "####" in ans:
-                data.append({"question": row["query"], "answer": ans})
+            extracted = extract_hash_answer(row["response"])
+
+            # Skip symbolic / LaTeX answers entirely
+            if extracted is None:
+                filtered += 1
+                continue
+
+            kept += 1
+
+            data.append({
+                "question": row["query"],
+                "answer": extracted,   # already parsed
+            })
+
+        print(
+            f"MetaMathQA: kept {kept:,} numeric examples, "
+            f"filtered {filtered:,} symbolic examples."
+        )
     else:
         raise ValueError(f"Unknown source: {source}")
 
@@ -100,7 +151,7 @@ def get_dataset(data_dir: str, split: str = "train", source: str = "tfds") -> gr
                 question=_as_text(x["question"]),
             ),
             "question": _as_text(x["question"]),
-            "answer": extract_hash_answer(_as_text(x["answer"])),
+            "answer": _as_text(x["answer"]) if source=="metamath" else extract_hash_answer(_as_text(x["answer"])),
         })
     )
 
