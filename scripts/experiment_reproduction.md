@@ -13,9 +13,14 @@ This runner standardizes all listed experiments:
   training stop condition. All profiles use the original baseline schedule:
   `LR_SCHEDULE_STEPS=3364` and integer `WARMUP_STEPS=336`, matching the
   original 10% baseline warmup after truncation to a step count.
-- During-training eval size and cadence are profile-specific. The baseline
-  profile uses `NUM_EVAL_BATCHES=374` and `EVAL_EVERY_N_STEPS=64`; the other
-  profiles use `NUM_EVAL_BATCHES=50` and `EVAL_EVERY_N_STEPS=250`.
+- During-training eval holds out the final `NUM_EVAL_BATCHES` batches from the
+  shuffled training split. This matches the original baseline split direction,
+  while leaving `NUM_BATCHES=None` so the full available training source is
+  used. The baseline profile uses `NUM_EVAL_BATCHES=374`; the other profiles
+  use `NUM_EVAL_BATCHES=50`.
+- `SEED=33` is set in every profile and is used for dataset shuffling, rollout
+  sampling, and standalone eval generation. Profile launches also export
+  `PYTHONHASHSEED=33` before `train.py` starts.
 - Training does not construct or pass the test split. The during-training eval
   set is held out from the training split; the test split is only used by
   `evaluate.py`.
@@ -116,8 +121,8 @@ python scripts/evaluate.py \
 
 The `baseline` profile is intended to reproduce the baseline run as used with
 the Kaggle source, except for the fixed-step stopping condition. It keeps
-the full shuffled Kaggle training split, a 374-question held-out train-split eval
-set every 64 training steps, baseline rewards, baseline LR schedule, and legacy
+the full shuffled Kaggle training split except for the final 374 held-out
+train-split eval batches, baseline rewards, baseline LR schedule, and legacy
 GSM8K answer extraction. It still uses the shared 5-hour wall-time stop and
 best-checkpoint mirror.
 

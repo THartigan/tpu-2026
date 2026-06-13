@@ -13,11 +13,13 @@ Tunix's RLCluster uses Orbax and will pick up the latest step in CKPT_DIR.
 """
 import argparse
 import os
+import random
 import re
 import shutil
 import time
 
 import nest_asyncio
+import numpy as np
 import optax
 import wandb
 from dotenv import load_dotenv
@@ -49,6 +51,7 @@ from config import (
     REPEAT_TRAIN_DATA,
     REWARD_PROFILE,
     SAVE_INTERVAL_STEPS,
+    SEED,
     TEMPERATURE,
     TENSORBOARD_DIR,
     TEST_DATA_DIR,
@@ -66,7 +69,7 @@ from config import (
 )
 from data import SOURCE_CHOICES, build_train_val_test
 from model import build_mesh, download_weights, load_base_model, get_lora_model, load_tokenizer
-from rewards import REWARD_FNS, latest_eval_check_answer
+from rewards import REWARD_FNS, latest_eval_check_answer, max_possible_reward
 
 
 class WallTimeLimitedIterable:
@@ -91,10 +94,11 @@ class WallTimeLimitedIterable:
             yield item
 
 
-class BestEvalCheckAnswerCheckpointHook:
-    """Force-save an actor checkpoint whenever eval check_answer improves."""
+class EvalMetricsCheckpointHook:
+    """Log eval-only metrics and optionally save the best check_answer checkpoint."""
 
-    def __init__(self):
+    def __init__(self, save_best: bool = True):
+        self.save_best = save_best
         self.best = None
 
     def on_train_start(self, train_ctx):
@@ -123,12 +127,19 @@ class BestEvalCheckAnswerCheckpointHook:
         os.rename(tmp_dir, best_dir)
 
     def on_eval_step_end(self, train_ctx, eval_loss):
+        step = train_ctx.train_steps
+        max_reward = max_possible_reward(REWARD_PROFILE, step)
+        if wandb.run is not None:
+            wandb.log({"eval/max_possible_reward": max_reward}, step=step)
+        print(f"Eval max_possible_reward={max_reward:.4f} at step {step}.")
+
         score = latest_eval_check_answer()
+        if not self.save_best:
+            return
         if score is None or (self.best is not None and score <= self.best):
             return
 
         self.best = score
-        step = train_ctx.train_steps
         if step <= 0 or train_ctx.config.checkpoint_root_directory is None:
             print(f"New best eval check_answer={score:.4f} at step {step}; skipping checkpoint.")
             return
@@ -178,6 +189,12 @@ def login_services():
         wandb.login(key=os.environ["WANDB_API_KEY"])
     if os.environ.get("HF_TOKEN"):
         os.system(f'hf auth login --token "{os.environ["HF_TOKEN"]}"')
+
+
+def set_global_seed(seed: int):
+    os.environ.setdefault("PYTHONHASHSEED", str(seed))
+    random.seed(seed)
+    np.random.seed(seed)
 
 
 def maybe_init_wandb(run_id: str | None, experiment_name: str | None):
@@ -239,6 +256,7 @@ def build_cluster_config(mesh, optimizer, eos_tokens, ckpt_dir: str, tensorboard
             max_prompt_length=MAX_PROMPT_LENGTH,
             kv_cache_size=MAX_PROMPT_LENGTH + TOTAL_GENERATION_STEPS + 256,
             temperature=TEMPERATURE, top_p=TOP_P, top_k=TOP_K,
+            seed=SEED,
             eos_tokens=eos_tokens,
         ),
     )
@@ -263,6 +281,7 @@ def main():
     if not args.experiment_name:
         ap.error("--experiment-name is required for training.")
 
+    set_global_seed(SEED)
     ckpt_dir = experiment_path(CKPT_DIR, args.experiment_name)
     tensorboard_dir = experiment_path(TENSORBOARD_DIR, args.experiment_name)
 
@@ -301,14 +320,15 @@ def main():
         actor=lora, reference=base, tokenizer=tokenizer, cluster_config=cluster_cfg,
     )
     trainer = GRPOLearner(rl_cluster=rl_cluster, reward_fns=REWARD_FNS, algo_config=grpo_cfg)
-    if args.save_best_eval_check_answer:
-        trainer.rl_cluster.actor_trainer.with_training_hooks(BestEvalCheckAnswerCheckpointHook())
+    trainer.rl_cluster.actor_trainer.with_training_hooks(
+        EvalMetricsCheckpointHook(save_best=args.save_best_eval_check_answer)
+    )
 
     print(
         f"Starting GRPO training. CKPT_DIR={ckpt_dir}  "
         f"TENSORBOARD_DIR={tensorboard_dir}  TRAINING_STEP_CAP={TRAINING_STEP_CAP}  "
         f"LR_SCHEDULE_STEPS={LR_SCHEDULE_STEPS}  REWARD_PROFILE={REWARD_PROFILE}  "
-        f"MAX_WALL_TIME_HOURS={max_wall_time_hours}"
+        f"SEED={SEED}  MAX_WALL_TIME_HOURS={max_wall_time_hours}"
     )
     trainer.train(train_ds, val_ds)
     print("Training finished.")

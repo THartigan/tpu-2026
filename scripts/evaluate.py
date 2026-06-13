@@ -36,6 +36,7 @@ from config import (
     TRAIN_MICRO_BATCH_SIZE,
     NUM_BATCHES,
     NUM_EPOCHS,
+    SEED,
 )
 from answer_parsing import normalise_number, numeric_ratio
 from data import SYSTEM_PROMPT, TEMPLATE, build_train_val_test
@@ -62,7 +63,8 @@ def generate(question, sampler, eos_tokens, temperature=0.7, top_k=50, top_p=0.9
     return out.text[0] if isinstance(question, str) else out.text
 
 
-def evaluate(dataset, sampler, eos_tokens, temperature=0.7, top_k=50, top_p=0.95, num_passes=1):
+def evaluate(dataset, sampler, eos_tokens, temperature=0.7, top_k=50, top_p=0.95,
+             num_passes=1, seed: int = SEED):
     per_question = []
 
     for batch in tqdm(dataset):
@@ -70,7 +72,7 @@ def evaluate(dataset, sampler, eos_tokens, temperature=0.7, top_k=50, top_p=0.95
         questions = batch["question"]
         per_q = [[] for _ in range(len(questions))]
         for p in range(num_passes):
-            responses = generate(questions, sampler, eos_tokens, temperature, top_k, top_p, seed=p)
+            responses = generate(questions, sampler, eos_tokens, temperature, top_k, top_p, seed=seed + p)
             for i, r in enumerate(responses):
                 per_q[i].append(r)
 
@@ -162,6 +164,7 @@ def save_eval_result(args, ckpt_root: str, restored_step: int | None, result):
         "bootstrap_samples": args.bootstrap_samples,
         "bootstrap_confidence": args.bootstrap_confidence,
         "bootstrap_seed": args.bootstrap_seed,
+        "generation_seed": args.seed,
         "correct": result["correct"],
         "total": result["total"],
         "accuracy": result["accuracy"],
@@ -207,6 +210,8 @@ def main():
                     help="Bootstrap confidence level. Default: 0.95.")
     ap.add_argument("--bootstrap-seed", type=int, default=0,
                     help="Seed for bootstrap resampling. Default: 0.")
+    ap.add_argument("--seed", type=int, default=SEED,
+                    help=f"Base seed for evaluation generation. Default: {SEED}.")
     args = ap.parse_args()
     if not args.baseline and not args.experiment_name and not args.ckpt_dir:
         ap.error("--experiment-name is required for checkpoint evaluation unless --ckpt-dir is provided.")
@@ -245,7 +250,7 @@ def main():
             head_dim=cfg.head_dim,
         ),
     )
-    result = evaluate(test_ds, sampler, eos_tokens, **GENERATION_CONFIGS[args.preset])
+    result = evaluate(test_ds, sampler, eos_tokens, seed=args.seed, **GENERATION_CONFIGS[args.preset])
     result["confidence_intervals"] = bootstrap_confidence_intervals(
         result["per_question"],
         num_samples=args.bootstrap_samples,

@@ -41,6 +41,8 @@ def load_manifest(path: Path = MANIFEST_PATH) -> dict[str, dict[str, Any]]:
 def profile_env(profile: dict[str, Any], experiment_name: str) -> dict[str, str]:
     env = {str(k): str(v) for k, v in profile.get("env", {}).items()}
     env["EXPERIMENT_NAME"] = experiment_name
+    env.setdefault("SEED", "33")
+    env.setdefault("PYTHONHASHSEED", env["SEED"])
     env.setdefault("MAX_WALL_TIME_HOURS", "5")
     return env
 

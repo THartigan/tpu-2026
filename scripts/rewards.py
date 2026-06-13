@@ -93,6 +93,12 @@ def _reward_step(kwargs):
 
 def _format_reward_scale(kwargs):
     step = _reward_step(kwargs)
+    return format_reward_scale_at_step(step)
+
+
+def format_reward_scale_at_step(step: int | float | None):
+    if step is None:
+        step = _LATEST_TRAIN_STEP
     if step < FORMAT_REWARD_FULL_STEPS:
         return 1.0
     decay_progress = min(
@@ -288,6 +294,22 @@ def latest_eval_check_answer():
     if not _LATEST_EVAL_CHECK_ANSWER_VALUES:
         return None
     return sum(_LATEST_EVAL_CHECK_ANSWER_VALUES) / len(_LATEST_EVAL_CHECK_ANSWER_VALUES)
+
+
+def max_possible_reward(profile: str | None = None, step: int | float | None = None):
+    """Return the maximum per-completion reward for the selected reward profile."""
+    key = str(profile or os.environ.get("REWARD_PROFILE", REWARD_PROFILE)).strip().lower()
+    if key == "baseline":
+        return 3.0 + 2.5 + 3.0 + 1.5
+    if key in {"improvement-1", "improvement_1"}:
+        return 3.0 + 2.5 + ANSWER_EXACT_REWARD + NUMBER_EXACT_REWARD
+    if key in {"improvement-2", "improvement_2"}:
+        format_max = (3.0 + 2.5) * format_reward_scale_at_step(step)
+        return format_max + ANSWER_EXACT_REWARD + NUMBER_EXACT_REWARD
+    raise ValueError(
+        f"Unknown REWARD_PROFILE={profile!r}. "
+        f"Choose one of: {', '.join(sorted(REWARD_PROFILES))}."
+    )
 
 
 def check_numbers(prompts, completions, answer, **kwargs):

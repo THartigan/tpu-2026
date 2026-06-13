@@ -141,9 +141,12 @@ environment overrides, and command in
 `experiment_reproduction.md` for the baseline, improvement-1, improvement-2,
 MetaMath GSM8K-level, and MetaMath GSM8K+MATH-level profiles.
 
-During training, each profile holds out `NUM_EVAL_BATCHES` examples from the
-shuffled training split for lightweight eval. The rest of the train split is
-used for training. Profile runs are wall-time driven: `TRAINING_STEP_CAP` is set to a
+During training, each profile holds out the final `NUM_EVAL_BATCHES` batches
+from the shuffled training split for lightweight eval. The earlier batches are
+used for training, matching the original baseline split direction without
+requiring `NUM_BATCHES`. The baseline profile uses `NUM_EVAL_BATCHES=374`;
+the other profiles use `NUM_EVAL_BATCHES=50`. Profile runs are wall-time driven:
+`TRAINING_STEP_CAP` is set to a
 very high safety ceiling and `MAX_WALL_TIME_HOURS=5` is the normal stopping
 condition. Pass `--max-wall-time-hours 0` to disable the wall-time limit. By
 default, training force-saves a checkpoint whenever eval `check_answer` reaches
@@ -151,6 +154,8 @@ a new high; pass `--no-save-best-eval-check-answer` to disable this. The current
 best checkpoint is also copied to `CKPT_DIR/<experiment>/best_check_answer`,
 outside the normal `actor/` retention policy, as a checkpoint root containing
 the best step. It is overwritten only by a later better checkpoint.
+Each training eval also logs `eval/max_possible_reward`; this is an auxiliary
+normalisation reference and does not contribute to training.
 
 ## 6. Resuming after a crash
 
@@ -255,7 +260,8 @@ What to look for:
 | `RANK` (LoRA)         | 64      | More adapter capacity, more KL drift potential.     |
 | `TEMPERATURE`         | 0.7     | Diversity within each group of G rollouts.          |
 | `TOP_P`               | 0.95    | Nucleus sampling cutoff for rollout diversity.      |
-| `NUM_EVAL_BATCHES`    | profile | During-training eval set size.                      |
+| `SEED`                | 33      | Shared data-shuffle, rollout, and eval generation seed. |
+| `NUM_EVAL_BATCHES`    | profile | Final shuffled train batches held out for training eval. |
 | `EVAL_EVERY_N_STEPS`  | profile | Frequency of lightweight eval during training.      |
 | `REWARD_PROFILE`      | profile | `baseline`, `improvement-1`, or `improvement-2`.    |
 | `WARMUP_STEPS`        | 336     | Integer baseline warmup duration.                   |
@@ -273,6 +279,8 @@ Greedy decoding gives a deterministic number you can compare against. Use
 `--preset standard` for a sampling-based estimate. Standalone evaluation uses
 the full Kaggle GSM8K test split by default; during-training eval is the small
 train-split holdout controlled by each profile's `NUM_EVAL_BATCHES`.
+Evaluation generation uses `--seed 33` by default; bootstrap resampling uses
+the separate `--bootstrap-seed`.
 
 `evaluate.py` also reports bootstrap confidence intervals over evaluated
 questions and saves the per-question correctness rows to

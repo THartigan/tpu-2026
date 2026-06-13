@@ -86,7 +86,7 @@ def build_train_command(args: argparse.Namespace, profile: str, name: str) -> li
     return command
 
 
-def build_eval_command(args: argparse.Namespace, name: str, target: str) -> list[str]:
+def build_eval_command(args: argparse.Namespace, name: str, target: str, seed: str) -> list[str]:
     command = [
         args.python,
         "scripts/evaluate.py",
@@ -104,6 +104,8 @@ def build_eval_command(args: argparse.Namespace, name: str, target: str) -> list
         str(args.bootstrap_confidence),
         "--bootstrap-seed",
         str(args.bootstrap_seed),
+        "--seed",
+        seed,
     ]
     if target == "best":
         command.extend([
@@ -171,6 +173,7 @@ def main() -> int:
 
     for profile in args.profiles:
         name = experiment_name(profile, args.name_suffix)
+        profile_seed = str(manifest[profile].get("env", {}).get("SEED", "33"))
         run_record: dict[str, Any] = {
             "profile": profile,
             "experiment_name": name,
@@ -202,7 +205,7 @@ def main() -> int:
         if not args.skip_evaluation:
             for target in args.eval_targets:
                 eval_code = run_and_log(
-                    build_eval_command(args, name, target),
+                    build_eval_command(args, name, target, profile_seed),
                     logs_dir / f"{name}.{target}.eval.log",
                     dry_run=args.dry_run,
                 )

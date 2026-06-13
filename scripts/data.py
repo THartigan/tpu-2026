@@ -86,6 +86,10 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _seed() -> int:
+    return int(os.environ.get("SEED", "33"))
+
+
 def _download_kaggle_dataset(target_dir: str = "./data/gsm8k") -> str:
     os.makedirs(target_dir, exist_ok=True)
     src = Path(kagglehub.dataset_download("thedevastator/grade-school-math-8k-q-a"))
@@ -189,7 +193,7 @@ def _prepare_records(data: list[dict], split: str) -> grain.MapDataset:
     should_shuffle = (split != "train") or shuffle_train_data
     ds = grain.MapDataset.source(data)
     if should_shuffle:
-        ds = ds.shuffle(seed=42)
+        ds = ds.shuffle(seed=_seed())
     return ds.map(lambda x: {
         "prompts": x["prompts"],
         "question": _as_text(x["question"]),
@@ -215,7 +219,7 @@ def get_dataset(data_dir: str, split: str = "train", source: str = "tfds") -> gr
         )
         ds = grain.MapDataset.source(data)
         if split != "train" or _env_bool("SHUFFLE_TRAIN_DATA", True):
-            ds = ds.shuffle(seed=42)
+            ds = ds.shuffle(seed=_seed())
         return ds.map(lambda x: {
             "prompts": TEMPLATE.format(
                 system_prompt=SYSTEM_PROMPT,
@@ -254,8 +258,9 @@ def build_train_val_test(num_batches: int | None,
             raise ValueError("num_eval_batches must be non-negative.")
         if num_eval_batches >= len(full):
             raise ValueError("num_eval_batches must be smaller than the training set.")
-        val_ds = full[:num_eval_batches] if num_eval_batches else None
-        train_base = full[num_eval_batches:]
+        split_at = len(full) - num_eval_batches
+        train_base = full[:split_at]
+        val_ds = full[split_at:] if num_eval_batches else None
     elif train_fraction == 1.0:
         train_base = full
         val_ds = None
