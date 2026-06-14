@@ -91,7 +91,7 @@ Checkpoints go under:
 /home/shared/ckpts/<experiment-name>/
 ```
 
-The current best eval `check_answer` checkpoint is mirrored to:
+The current best eval `check_answer` checkpoint is saved to:
 
 ```text
 /home/shared/ckpts/<experiment-name>/best_check_answer

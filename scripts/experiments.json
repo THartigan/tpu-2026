@@ -94,7 +94,7 @@
     "env": {
       "DATA_SOURCE": "kaggle+metamath_gsm8k",
       "SEED": "33",
-      "REWARD_PROFILE": "improvement-1",
+      "REWARD_PROFILE": "improvement-2",
       "NUM_EPOCHS": "1",
       "REPEAT_TRAIN_DATA": "true",
       "NUM_BATCHES": "None",
@@ -123,7 +123,7 @@
     "env": {
       "DATA_SOURCE": "kaggle+metamath_all_numeric",
       "SEED": "33",
-      "REWARD_PROFILE": "improvement-1",
+      "REWARD_PROFILE": "improvement-2",
       "NUM_EPOCHS": "1",
       "REPEAT_TRAIN_DATA": "true",
       "NUM_BATCHES": "None",

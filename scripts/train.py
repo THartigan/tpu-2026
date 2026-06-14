@@ -27,6 +27,7 @@ from orbax import checkpoint as ocp
 from tunix.rl import rl_cluster as rl_cluster_lib
 from tunix.rl.grpo.grpo_learner import GRPOConfig, GRPOLearner
 from tunix.rl.rollout import base_rollout
+from tunix.sft import checkpoint_manager as tunix_checkpoint_manager
 from tunix.sft import metrics_logger
 
 from config import (
@@ -116,15 +117,36 @@ class EvalMetricsCheckpointHook:
     def on_eval_step_start(self, train_ctx):
         pass
 
-    def _copy_best_checkpoint(self, step_dir: str, best_dir: str, step: int):
+    def _replace_dir(self, tmp_dir: str, dst_dir: str):
+        if os.path.exists(dst_dir):
+            shutil.rmtree(dst_dir)
+        os.rename(tmp_dir, dst_dir)
+
+    def _save_best_checkpoint(self, train_ctx, best_dir: str, step: int):
         tmp_dir = f"{best_dir}.tmp"
         if os.path.exists(tmp_dir):
             shutil.rmtree(tmp_dir)
-        os.makedirs(tmp_dir, exist_ok=True)
-        shutil.copytree(step_dir, os.path.join(tmp_dir, str(step)), symlinks=True)
-        if os.path.exists(best_dir):
-            shutil.rmtree(best_dir)
-        os.rename(tmp_dir, best_dir)
+        manager = tunix_checkpoint_manager.CheckpointManager(
+            root_directory=tmp_dir,
+            options=ocp.CheckpointManagerOptions(max_to_keep=1),
+        )
+        saved = manager.save(
+            step,
+            train_ctx.model,
+            train_ctx.optimizer,
+            save_only_lora_params=train_ctx._lora_enabled,
+            force=True,
+            custom_metadata=train_ctx.custom_checkpoint_metadata(),
+        )
+        orbax_manager = getattr(manager, "_checkpoint_manager", None)
+        if orbax_manager is not None:
+            orbax_manager.wait_until_finished()
+            orbax_manager.close()
+        step_dir = os.path.join(tmp_dir, str(step))
+        if not os.path.exists(step_dir):
+            raise RuntimeError(f"Best checkpoint save did not create {step_dir}.")
+        self._replace_dir(tmp_dir, best_dir)
+        return saved
 
     def on_eval_step_end(self, train_ctx, eval_loss):
         step = train_ctx.train_steps
@@ -145,30 +167,19 @@ class EvalMetricsCheckpointHook:
             return
 
         actor_dir = train_ctx.config.checkpoint_root_directory
-        step_dir = os.path.join(actor_dir, str(step))
-        saved = os.path.exists(step_dir)
-        if not saved:
-            saved = train_ctx.checkpoint_manager.save(
-                step,
-                train_ctx.model,
-                train_ctx.optimizer,
-                save_only_lora_params=train_ctx._lora_enabled,
-                force=True,
-                custom_metadata=train_ctx.custom_checkpoint_metadata(),
-            )
-
-        if not os.path.exists(step_dir):
+        best_dir = os.path.join(os.path.dirname(actor_dir), "best_check_answer")
+        try:
+            saved = self._save_best_checkpoint(train_ctx, best_dir, step)
+        except Exception as exc:
             print(
                 f"New best eval check_answer={score:.4f} at step {step}; "
-                f"checkpoint saved={saved}, but {step_dir} was not found for best copy."
+                f"failed to save best checkpoint at {best_dir}: {exc}"
             )
             return
 
-        best_dir = os.path.join(os.path.dirname(actor_dir), "best_check_answer")
-        self._copy_best_checkpoint(step_dir, best_dir, step)
         print(
             f"New best eval check_answer={score:.4f} at step {step}; "
-            f"checkpoint saved={saved}; best copy updated at {best_dir}."
+            f"best checkpoint saved={saved} at {best_dir}."
         )
 
 
