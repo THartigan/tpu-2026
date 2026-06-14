@@ -144,7 +144,7 @@ format rewards:
 
 `improvement-2` adds format reward tapering to the improvement-1 profile:
 
-- format rewards linearly decay from full strength after step 500 to 25% by step 1000
+- format rewards linearly decay from full strength after step 1000 to 25% by step 1500
 - non-negative approximate format shaping
 - short-output and long-output penalties
 - improved numeric parsing for commas, fractions, currency, and percentages

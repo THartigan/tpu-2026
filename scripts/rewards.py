@@ -29,7 +29,7 @@ from answer_parsing import numeric_ratio as _numeric_ratio
 from config import REWARD_PROFILE, TOTAL_GENERATION_STEPS
 from data import reasoning_start, reasoning_end, solution_start, solution_end
 
-FORMAT_REWARD_FULL_STEPS = 500
+FORMAT_REWARD_FULL_STEPS = 1000
 FORMAT_REWARD_DECAY_STEPS = 500
 FORMAT_REWARD_FINAL_SCALE = 0.25
 
