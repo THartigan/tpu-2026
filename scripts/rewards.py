@@ -50,6 +50,11 @@ LONG_OUTPUT_STRONG_TOKENS = round(TOTAL_GENERATION_STEPS * 0.833)
 LONG_OUTPUT_PENALTY = -0.25
 LONG_OUTPUT_STRONG_PENALTY = -0.5
 
+SHORT_OUTPUT_IMPROVEMENT_2_STRONG_TOKENS = 100
+SHORT_OUTPUT_IMPROVEMENT_2_MILD_TOKENS = 150
+SHORT_OUTPUT_IMPROVEMENT_2_STRONG_PENALTY = -1.0
+SHORT_OUTPUT_IMPROVEMENT_2_MILD_PENALTY = -0.25
+
 _LATEST_TRAIN_STEP = 0
 _LATEST_EVAL_CHECK_ANSWER_VALUES = []
 
@@ -203,6 +208,24 @@ def discourage_short_outputs(prompts, completions, **kwargs):
             scores.append(-0.5)
         elif not (has_reasoning and has_answer):
             scores.append(-0.25)
+        else:
+            scores.append(0.0)
+    return scores
+
+
+def discourage_short_outputs_improvement_2(prompts, completions, **kwargs):
+    """Improvement-2 token-length penalty for under-developed completions."""
+    scores = []
+    for response in completions:
+        tokens = _estimated_tokens(response)
+        has_reasoning = reasoning_start in response and reasoning_end in response
+        has_answer = solution_start in response and solution_end in response
+        if tokens < SHORT_OUTPUT_IMPROVEMENT_2_STRONG_TOKENS:
+            scores.append(SHORT_OUTPUT_IMPROVEMENT_2_STRONG_PENALTY)
+        elif tokens < SHORT_OUTPUT_IMPROVEMENT_2_MILD_TOKENS:
+            scores.append(SHORT_OUTPUT_IMPROVEMENT_2_MILD_PENALTY)
+        elif not (has_reasoning and has_answer):
+            scores.append(SHORT_OUTPUT_IMPROVEMENT_2_MILD_PENALTY)
         else:
             scores.append(0.0)
     return scores
@@ -395,7 +418,7 @@ REWARD_PROFILES = {
     "improvement-2": [
         match_format_exactly,
         match_format_approximately,
-        discourage_short_outputs,
+        discourage_short_outputs_improvement_2,
         discourage_long_outputs,
         check_answer,
         check_numbers,
@@ -403,7 +426,7 @@ REWARD_PROFILES = {
     "improvement_2": [
         match_format_exactly,
         match_format_approximately,
-        discourage_short_outputs,
+        discourage_short_outputs_improvement_2,
         discourage_long_outputs,
         check_answer,
         check_numbers,
