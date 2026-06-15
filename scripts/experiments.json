@@ -138,6 +138,7 @@
       "NUM_GENERATIONS": "8",
       "BETA": "0.15",
       "LEARNING_RATE": "5e-7",
+      "ROLLOUT_KV_CACHE_SIZE": "3072",
       "TEMPERATURE": "0.7",
       "TOP_P": "0.95",
       "TOP_K": "50",

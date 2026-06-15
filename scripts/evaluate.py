@@ -29,6 +29,7 @@ from config import (
     EXPERIMENT_NAME,
     GENERATION_CONFIGS,
     MAX_PROMPT_LENGTH,
+    ROLLOUT_KV_CACHE_SIZE,
     TEST_DATA_DIR,
     TOTAL_GENERATION_STEPS,
     TRAIN_DATA_DIR,
@@ -244,7 +245,11 @@ def main():
         transformer=model,
         tokenizer=tokenizer,
         cache_config=sampler_lib.CacheConfig(
-            cache_size=MAX_PROMPT_LENGTH + TOTAL_GENERATION_STEPS + 256,
+            cache_size=(
+                ROLLOUT_KV_CACHE_SIZE
+                if ROLLOUT_KV_CACHE_SIZE is not None
+                else MAX_PROMPT_LENGTH + TOTAL_GENERATION_STEPS + 256
+            ),
             num_layers=cfg.num_layers,
             num_kv_heads=cfg.num_kv_heads,
             head_dim=cfg.head_dim,

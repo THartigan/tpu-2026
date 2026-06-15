@@ -51,6 +51,7 @@ from config import (
     NUM_ITERATIONS,
     REPEAT_TRAIN_DATA,
     REWARD_PROFILE,
+    ROLLOUT_KV_CACHE_SIZE,
     SAVE_INTERVAL_STEPS,
     SEED,
     TEMPERATURE,
@@ -265,7 +266,11 @@ def build_cluster_config(mesh, optimizer, eos_tokens, ckpt_dir: str, tensorboard
         rollout_config=base_rollout.RolloutConfig(
             max_tokens_to_generate=TOTAL_GENERATION_STEPS,
             max_prompt_length=MAX_PROMPT_LENGTH,
-            kv_cache_size=MAX_PROMPT_LENGTH + TOTAL_GENERATION_STEPS + 256,
+            kv_cache_size=(
+                ROLLOUT_KV_CACHE_SIZE
+                if ROLLOUT_KV_CACHE_SIZE is not None
+                else MAX_PROMPT_LENGTH + TOTAL_GENERATION_STEPS + 256
+            ),
             temperature=TEMPERATURE, top_p=TOP_P, top_k=TOP_K,
             seed=SEED,
             eos_tokens=eos_tokens,

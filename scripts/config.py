@@ -69,6 +69,7 @@ MESH = [MESH_COUNTS, ("fsdp", "tp")]
 # ====== Generation during GRPO rollouts ======
 MAX_PROMPT_LENGTH = int(os.environ.get("MAX_PROMPT_LENGTH", "256"))
 TOTAL_GENERATION_STEPS = int(os.environ.get("TOTAL_GENERATION_STEPS", "768"))
+ROLLOUT_KV_CACHE_SIZE = _env_int_or_none("ROLLOUT_KV_CACHE_SIZE", None)
 TEMPERATURE = float(os.environ.get("TEMPERATURE", "0.7"))  # conservative rollout sampling reduces noisy rewards
 TOP_P = float(os.environ.get("TOP_P", "0.95"))
 TOP_K = int(os.environ.get("TOP_K", "50"))

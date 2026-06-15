@@ -24,7 +24,12 @@ from dotenv import load_dotenv
 from tunix.generate import sampler as sampler_lib
 from tunix.sft.checkpoint_manager import CheckpointManager
 
-from config import GENERATION_CONFIGS, MAX_PROMPT_LENGTH, TOTAL_GENERATION_STEPS
+from config import (
+    GENERATION_CONFIGS,
+    MAX_PROMPT_LENGTH,
+    ROLLOUT_KV_CACHE_SIZE,
+    TOTAL_GENERATION_STEPS,
+)
 from data import SYSTEM_PROMPT, TEMPLATE
 from model import (
     build_mesh,
@@ -55,7 +60,11 @@ def make_sampler(lora, tokenizer, cfg, max_tokens: int):
         transformer=lora,
         tokenizer=tokenizer,
         cache_config=sampler_lib.CacheConfig(
-            cache_size=MAX_PROMPT_LENGTH + max_tokens + 256,
+            cache_size=(
+                ROLLOUT_KV_CACHE_SIZE
+                if ROLLOUT_KV_CACHE_SIZE is not None
+                else MAX_PROMPT_LENGTH + max_tokens + 256
+            ),
             num_layers=cfg.num_layers,
             num_kv_heads=cfg.num_kv_heads,
             head_dim=cfg.head_dim,
