@@ -17,8 +17,8 @@ from typing import Any
 from run_experiment import MANIFEST_PATH, REPO_ROOT, load_manifest
 
 
-DEFAULT_SUITE_ROOT = Path(os.environ.get("EXPERIMENT_SUITE_DIR", "/home/shared/experiment_suites"))
-DEFAULT_CKPT_ROOT = Path(os.environ.get("CKPT_ROOT", "/home/shared/ckpts"))
+DEFAULT_SUITE_ROOT = Path(os.environ.get("EXPERIMENT_SUITE_DIR", "/home/thomas/experiment_suites"))
+DEFAULT_CKPT_ROOT = Path(os.environ.get("CKPT_ROOT", "/home/thomas/ckpts"))
 DEFAULT_PROFILES = [
     "baseline",
     "improvement-1",
@@ -126,7 +126,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Directory name under the suite root. Defaults to all-5h-<timestamp>.")
     parser.add_argument("--suite-root", type=Path, default=DEFAULT_SUITE_ROOT)
     parser.add_argument("--ckpt-root", type=Path, default=DEFAULT_CKPT_ROOT,
-                        help="Root checkpoint directory. Default: /home/shared/ckpts.")
+                        help="Root checkpoint directory. Default: /home/thomas/ckpts.")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--skip-training", action="store_true")
     parser.add_argument("--skip-evaluation", action="store_true")

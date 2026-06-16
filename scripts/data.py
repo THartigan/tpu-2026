@@ -86,6 +86,29 @@ def _env_bool(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_int_or_none(name: str) -> int | None:
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    if value.strip().lower() in {"", "none", "null"}:
+        return None
+    return int(value)
+
+
+def _load_query_tokenizer():
+    from transformers import AutoTokenizer
+
+    tokenizer_id = os.environ.get("METAMATH_QUERY_TOKENIZER", "google/gemma-3-1b-it")
+    try:
+        return AutoTokenizer.from_pretrained(tokenizer_id, local_files_only=True)
+    except Exception as exc:
+        raise RuntimeError(
+            "METAMATH_MAX_QUERY_TOKENS is set, but the tokenizer is not available "
+            f"locally for {tokenizer_id!r}. Run after model weights have been "
+            "downloaded, or unset METAMATH_MAX_QUERY_TOKENS."
+        ) from exc
+
+
 def _seed() -> int:
     return int(os.environ.get("SEED", "33"))
 
@@ -137,11 +160,36 @@ def _load_metamath_records(level: str) -> list[dict]:
     if level not in {"gsm8k", "all_numeric"}:
         raise ValueError(f"Unknown MetaMath level: {level}")
 
+    max_query_chars = (
+        _env_int_or_none("METAMATH_MAX_QUERY_CHARS")
+        if level == "all_numeric"
+        else None
+    )
+    max_query_tokens = (
+        _env_int_or_none("METAMATH_MAX_QUERY_TOKENS")
+        if level == "all_numeric"
+        else None
+    )
+    query_tokenizer = _load_query_tokenizer() if max_query_tokens is not None else None
     hf_dataset = load_dataset("meta-math/MetaMathQA", split="train")
     data = []
     kept = 0
     filtered = 0
+    filtered_long = 0
+    filtered_long_tokens = 0
     for row in hf_dataset:
+        query = row["query"]
+        if max_query_chars is not None and len(query) > max_query_chars:
+            filtered += 1
+            filtered_long += 1
+            continue
+        if (
+            max_query_tokens is not None
+            and len(query_tokenizer.encode(query, add_special_tokens=False)) > max_query_tokens
+        ):
+            filtered += 1
+            filtered_long_tokens += 1
+            continue
         response = row["response"]
         if level == "gsm8k" and "####" not in response:
             filtered += 1
@@ -151,12 +199,17 @@ def _load_metamath_records(level: str) -> list[dict]:
             filtered += 1
             continue
         kept += 1
-        data.append(_record(row["query"], response, answer, f"metamath_{level}"))
+        data.append(_record(query, response, answer, f"metamath_{level}"))
 
-    print(
+    message = (
         f"MetaMathQA ({level}): kept {kept:,} numeric examples, "
-        f"filtered {filtered:,} examples."
+        f"filtered {filtered:,} examples"
     )
+    if max_query_chars is not None:
+        message += f" ({filtered_long:,} over {max_query_chars:,} query chars)"
+    if max_query_tokens is not None:
+        message += f" ({filtered_long_tokens:,} over {max_query_tokens:,} query tokens)"
+    print(f"{message}.")
     return data
 
 

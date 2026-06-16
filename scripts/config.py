@@ -102,9 +102,9 @@ MAX_GRAD_NORM = _env_float_or_none("MAX_GRAD_NORM", 0.1)  # tight clipping keeps
 
 # ====== Checkpointing ======
 # NOTE: /tmp is volatile. For long runs, point this at persistent storage.
-INTERMEDIATE_CKPT_DIR = "/home/shared/intermediate_ckpt/"
-CKPT_DIR = "/home/shared/ckpts/"
-TENSORBOARD_DIR = "/home/shared/tensorboard/grpo"
+INTERMEDIATE_CKPT_DIR = "/home/thomas/intermediate_ckpt/"
+CKPT_DIR = "/home/thomas/ckpts/"
+TENSORBOARD_DIR = "/home/thomas/tensorboard/grpo"
 SAVE_INTERVAL_STEPS = int(os.environ.get("SAVE_INTERVAL_STEPS", "500"))
 MAX_TO_KEEP = int(os.environ.get("MAX_TO_KEEP", "8"))
 EXPERIMENT_NAME = os.environ.get("EXPERIMENT_NAME", None)

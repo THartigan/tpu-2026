@@ -16,7 +16,7 @@ from typing import Any
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MANIFEST_PATH = Path(__file__).resolve().with_name("experiments.json")
-DEFAULT_LOG_DIR = Path(os.environ.get("EXPERIMENT_LOG_DIR", "/home/shared/experiment_launches"))
+DEFAULT_LOG_DIR = Path(os.environ.get("EXPERIMENT_LOG_DIR", "/home/thomas/experiment_launches"))
 
 
 def _run_git(args: list[str]) -> str | None:

@@ -12,6 +12,9 @@ Resuming from checkpoint: just point CKPT_DIR at the existing directory.
 Tunix's RLCluster uses Orbax and will pick up the latest step in CKPT_DIR.
 """
 import argparse
+import datetime as dt
+import glob
+import json
 import os
 import random
 import re
@@ -102,9 +105,15 @@ class EvalMetricsCheckpointHook:
     def __init__(self, save_best: bool = True):
         self.save_best = save_best
         self.best = None
+        self.best_step = None
+        self._loaded_existing_best = False
 
     def on_train_start(self, train_ctx):
-        pass
+        if not self.save_best or train_ctx.config.checkpoint_root_directory is None:
+            return
+        actor_dir = train_ctx.config.checkpoint_root_directory
+        best_dir = os.path.join(os.path.dirname(actor_dir), "best_check_answer")
+        self._load_existing_best(best_dir)
 
     def on_train_end(self, train_ctx):
         pass
@@ -122,6 +131,90 @@ class EvalMetricsCheckpointHook:
         if os.path.exists(dst_dir):
             shutil.rmtree(dst_dir)
         os.rename(tmp_dir, dst_dir)
+
+    def _best_metadata_path(self, best_dir: str) -> str:
+        return f"{best_dir}.json"
+
+    def _load_existing_best(self, best_dir: str):
+        if self._loaded_existing_best:
+            return
+        self._loaded_existing_best = True
+        metadata_path = self._best_metadata_path(best_dir)
+        if os.path.exists(metadata_path):
+            try:
+                with open(metadata_path, encoding="utf-8") as f:
+                    payload = json.load(f)
+                self.best = float(payload["check_answer"])
+                self.best_step = int(payload["step"])
+                print(
+                    f"Loaded existing best eval check_answer={self.best:.4f} "
+                    f"from {metadata_path} at step {self.best_step}."
+                )
+                return
+            except Exception as exc:
+                print(f"Could not read best checkpoint metadata {metadata_path}: {exc}")
+
+        recovered = self._recover_existing_best_from_logs(best_dir)
+        if recovered is not None:
+            self.best, self.best_step = recovered
+            print(
+                f"Recovered existing best eval check_answer={self.best:.4f} "
+                f"for {best_dir} at step {self.best_step} from prior logs."
+            )
+            try:
+                self._write_best_metadata(best_dir, self.best, self.best_step, saved=True)
+            except Exception as exc:
+                print(f"Could not write recovered best checkpoint metadata: {exc}")
+            return
+
+        if os.path.exists(best_dir):
+            print(
+                f"Existing best checkpoint found at {best_dir}, but no score metadata "
+                "was available. It may be overwritten by the next improved eval."
+            )
+
+    def _recover_existing_best_from_logs(self, best_dir: str) -> tuple[float, int] | None:
+        experiment_name = os.path.basename(os.path.dirname(best_dir))
+        candidates = []
+        for root in ("/home/thomas/experiment_suites", "/home/shared/experiment_suites"):
+            pattern = os.path.join(root, "*", "logs", f"{experiment_name}.train.log")
+            candidates.extend(glob.glob(pattern))
+        best = None
+        best_pattern = re.compile(
+            r"New best eval check_answer=([0-9.]+) at step ([0-9]+); "
+            r"best checkpoint saved=True at (.+?)\."
+        )
+        for path in candidates:
+            try:
+                with open(path, encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        match = best_pattern.search(line)
+                        if match is None:
+                            continue
+                        score = float(match.group(1))
+                        step = int(match.group(2))
+                        logged_dir = match.group(3)
+                        if os.path.normpath(logged_dir) != os.path.normpath(best_dir):
+                            continue
+                        if best is None or score > best[0]:
+                            best = (score, step)
+            except OSError:
+                continue
+        return best
+
+    def _write_best_metadata(self, best_dir: str, score: float, step: int, saved: bool):
+        payload = {
+            "check_answer": score,
+            "step": step,
+            "saved": bool(saved),
+            "timestamp_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+        }
+        metadata_path = self._best_metadata_path(best_dir)
+        tmp_path = f"{metadata_path}.tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2, sort_keys=True)
+            f.write("\n")
+        os.replace(tmp_path, metadata_path)
 
     def _save_best_checkpoint(self, train_ctx, best_dir: str, step: int):
         tmp_dir = f"{best_dir}.tmp"
@@ -163,6 +256,7 @@ class EvalMetricsCheckpointHook:
             return
 
         self.best = score
+        self.best_step = step
         if step <= 0 or train_ctx.config.checkpoint_root_directory is None:
             print(f"New best eval check_answer={score:.4f} at step {step}; skipping checkpoint.")
             return
@@ -178,6 +272,7 @@ class EvalMetricsCheckpointHook:
             )
             return
 
+        self._write_best_metadata(best_dir, score, step, saved)
         print(
             f"New best eval check_answer={score:.4f} at step {step}; "
             f"best checkpoint saved={saved} at {best_dir}."

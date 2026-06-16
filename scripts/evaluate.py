@@ -46,7 +46,7 @@ from model import build_mesh, download_weights, load_base_model, get_lora_model,
 from rewards import match_format, match_numbers
 
 DEFAULT_CKPT_ROOT = os.path.join(CKPT_DIR, "actor")
-EVAL_RESULTS_DIR = "/home/shared/eval_results"
+EVAL_RESULTS_DIR = "/home/thomas/eval_results"
 
 
 def generate(question, sampler, eos_tokens, temperature=0.7, top_k=50, top_p=0.95, seed=None):

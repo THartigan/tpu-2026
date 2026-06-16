@@ -2,7 +2,7 @@
 
 This is intended for a run launched through ``run_all_experiments.py``. It
 polls the suite ``summary.json`` until training and evaluation finish, finds the
-saved ``/home/shared/eval_results/*.json`` files, parses the training log for
+saved ``/home/thomas/eval_results/*.json`` files, parses the training log for
 the W&B run id, and attaches the eval JSONs as a W&B artifact.
 """
 from __future__ import annotations
@@ -25,8 +25,8 @@ except ModuleNotFoundError:
         return False
 
 
-DEFAULT_SUITE_ROOT = Path("/home/shared/experiment_suites")
-DEFAULT_EVAL_RESULTS_DIR = Path("/home/shared/eval_results")
+DEFAULT_SUITE_ROOT = Path("/home/thomas/experiment_suites")
+DEFAULT_EVAL_RESULTS_DIR = Path("/home/thomas/eval_results")
 DEFAULT_WANDB_PROJECT = os.environ.get("WANDB_PROJECT", "tunix")
 DEFAULT_WANDB_ENTITY = os.environ.get(
     "WANDB_ENTITY", "tjh200-university-of-cambridge"
